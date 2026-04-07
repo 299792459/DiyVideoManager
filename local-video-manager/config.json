@@ -9,5 +9,9 @@
     "model": "gpt-4o-mini",
     "max_candidates": 120,
     "enabled": false
+  },
+  "stats": {
+    "performance_sampling_enabled": false,
+    "sample_size": 30
   }
 }

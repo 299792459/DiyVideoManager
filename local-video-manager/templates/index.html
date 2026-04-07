@@ -7,86 +7,127 @@
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-  <header>
-    <h1>本地视频管理</h1>
-    <p>支持智能搜索、标签管理、自动标签、排序和观看次数统计</p>
+  <header class="site-header">
+    <div class="site-title">
+      <h1>本地视频管理</h1>
+      <p class="subtitle">智能搜索、标签与本地库管理</p>
+    </div>
+    <nav class="top-nav" aria-label="主导航">
+      <button type="button" id="navVideos" class="nav-btn active">视频</button>
+      <button type="button" id="navSettings" class="nav-btn">设置</button>
+    </nav>
   </header>
 
-  <section class="panel">
-    <h2>基础设置（可指定数据目录，避免固定 C 盘）</h2>
-    <div class="row">
-      <label>数据目录</label>
-      <input id="dataDir" type="text" placeholder="例如 D:\video-manager-data" />
-    </div>
-    <div class="row">
-      <label>视频目录（多个用分号分隔）</label>
-      <input id="libraryDirs" type="text" placeholder="例如 D:\Videos;E:\Archive" />
-    </div>
-    <div class="row">
-      <label>AI 接口 Base URL（OpenAI 兼容）</label>
-      <input id="llmBaseUrl" type="text" placeholder="例如 https://api.openai.com/v1 或你的龙虾网关地址" />
-    </div>
-    <div class="row">
-      <label>AI 模型名</label>
-      <input id="llmModel" type="text" placeholder="例如 gpt-4o-mini / qwen-plus 等" />
-    </div>
-    <div class="row">
-      <label>AI API Key</label>
-      <input id="llmApiKey" type="password" placeholder="可留空（禁用模型检索）" />
-    </div>
-    <div class="row">
-      <label>模型候选池大小（越大越耗 token）</label>
-      <input id="llmMaxCandidates" type="number" min="20" max="500" value="120" />
-    </div>
-    <div class="row">
-      <label>启用模型检索</label>
-      <input id="llmEnabled" type="checkbox" />
-    </div>
-    <div class="actions">
-      <button id="saveConfigBtn">保存配置</button>
-      <button id="scanBtn">扫描视频</button>
-      <button id="refreshCoversMissingBtn" title="为尚未有封面的视频生成默认封面">刷新封面（仅缺封面）</button>
-      <button id="refreshCoversAllBtn" title="重新为所有视频生成默认封面（会覆盖自动封面，不覆盖你手动上传的需自行判断）">重新生成全部封面</button>
-      <button id="autoTagBtn">根据文件名自动打标签</button>
-      <button id="exportAiDataBtn">导出AI数据(JSONL)</button>
-    </div>
-    <div id="status"></div>
-  </section>
+  <!-- ========== 视频 ========== -->
+  <div id="viewVideos" class="view">
+    <section class="panel">
+      <h2>筛选与搜索</h2>
+      <div class="toolbar">
+        <input id="searchInput" type="text" placeholder="输入关键词或意图词，例如：丝袜 / 黑丝 / 教程" />
+        <select id="tagFilter">
+          <option value="">全部标签</option>
+        </select>
+        <select id="sortSelect">
+          <option value="modified_at">最近修改</option>
+          <option value="watch_count">观看次数</option>
+          <option value="duration_sec">时长</option>
+          <option value="size_bytes">文件大小</option>
+          <option value="filename">文件名</option>
+          <option value="hot">热门度</option>
+        </select>
+        <select id="orderSelect">
+          <option value="desc">降序</option>
+          <option value="asc">升序</option>
+        </select>
+        <button id="queryBtn">查询</button>
+      </div>
+    </section>
 
-  <section class="panel">
-    <h2>筛选与搜索</h2>
-    <div class="toolbar">
-      <input id="searchInput" type="text" placeholder="输入关键词或意图词，例如：丝袜 / 黑丝 / 教程" />
-      <select id="tagFilter">
-        <option value="">全部标签</option>
-      </select>
-      <select id="sortSelect">
-        <option value="modified_at">最近修改</option>
-        <option value="watch_count">观看次数</option>
-        <option value="duration_sec">时长</option>
-        <option value="size_bytes">文件大小</option>
-        <option value="filename">文件名</option>
-        <option value="hot">热门度</option>
-      </select>
-      <select id="orderSelect">
-        <option value="desc">降序</option>
-        <option value="asc">升序</option>
-      </select>
-      <button id="queryBtn">查询</button>
-    </div>
-  </section>
+    <section class="panel">
+      <h2>AI 提问式搜索</h2>
+      <div class="toolbar ai-toolbar">
+        <input id="aiQuestionInput" type="text" placeholder="例如：找出最近一个月看得最多的教程类视频" />
+        <input id="aiTopKInput" type="number" min="1" max="100" value="30" />
+        <button id="aiSearchBtn">AI搜索</button>
+      </div>
+      <div id="aiReason" class="muted"></div>
+    </section>
 
-  <section class="panel">
-    <h2>AI 提问式搜索（问模型来找视频）</h2>
-    <div class="toolbar ai-toolbar">
-      <input id="aiQuestionInput" type="text" placeholder="例如：找出最近一个月看得最多的黑丝风格视频" />
-      <input id="aiTopKInput" type="number" min="1" max="100" value="30" />
-      <button id="aiSearchBtn">AI搜索</button>
-    </div>
-    <div id="aiReason" class="muted"></div>
-  </section>
+    <div id="videoStatus" class="inline-status"></div>
 
-  <section id="videoGrid" class="grid"></section>
+    <section id="videoGrid" class="grid"></section>
+  </div>
+
+  <!-- ========== 设置 ========== -->
+  <div id="viewSettings" class="view hidden">
+    <section class="panel">
+      <h2>路径与数据</h2>
+      <div class="row">
+        <label>数据目录</label>
+        <input id="dataDir" type="text" placeholder="例如 D:\video-manager-data" />
+      </div>
+      <div class="row">
+        <label>视频目录（分号分隔）</label>
+        <input id="libraryDirs" type="text" placeholder="例如 D:\Videos;E:\Archive" />
+      </div>
+      <div class="actions">
+        <button id="saveConfigBtn">保存配置</button>
+        <button id="scanBtn">扫描视频</button>
+        <button id="refreshCoversMissingBtn">刷新封面（仅缺封面）</button>
+        <button id="refreshCoversAllBtn">重新生成全部封面</button>
+        <button id="autoTagBtn">根据文件名自动打标签</button>
+        <button id="exportAiDataBtn">导出AI数据(JSONL)</button>
+      </div>
+      <div id="settingsStatus" class="inline-status"></div>
+    </section>
+
+    <section class="panel">
+      <h2>AI 模型（OpenAI 兼容）</h2>
+      <div class="row">
+        <label>Base URL</label>
+        <input id="llmBaseUrl" type="text" placeholder="https://api.openai.com/v1" />
+      </div>
+      <div class="row">
+        <label>模型名</label>
+        <input id="llmModel" type="text" placeholder="gpt-4o-mini" />
+      </div>
+      <div class="row">
+        <label>API Key</label>
+        <input id="llmApiKey" type="password" placeholder="可留空" />
+      </div>
+      <div class="row">
+        <label>候选池大小</label>
+        <input id="llmMaxCandidates" type="number" min="20" max="500" value="120" />
+      </div>
+      <div class="row">
+        <label>启用模型检索</label>
+        <input id="llmEnabled" type="checkbox" />
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>系统使用统计</h2>
+      <p class="muted small">汇总数据来自数据库与磁盘，开销很小。性能抽样仅在您点击时执行，不会在后台持续占用 CPU。</p>
+      <div class="actions">
+        <button type="button" id="statsRefreshSummaryBtn">刷新汇总</button>
+      </div>
+      <div id="statsSummaryBox" class="stats-box"></div>
+
+      <h3 class="stats-sub">性能抽样</h3>
+      <div class="row">
+        <label>启用抽样（开启后点一次下方按钮或自动执行一次抽样）</label>
+        <input id="statsSamplingEnabled" type="checkbox" />
+      </div>
+      <div class="row">
+        <label>抽样条数（5–100）</label>
+        <input id="statsSampleSize" type="number" min="5" max="100" value="30" />
+      </div>
+      <div class="actions">
+        <button type="button" id="statsRunSampleBtn">执行抽样扫描</button>
+      </div>
+      <div id="statsSampleBox" class="stats-box mono"></div>
+    </section>
+  </div>
 
   <dialog id="playerDialog">
     <div class="player-wrap">
@@ -99,19 +140,43 @@
   </dialog>
 
   <script>
-    const statusEl = document.getElementById("status");
+    const videoStatusEl = document.getElementById("videoStatus");
+    const settingsStatusEl = document.getElementById("settingsStatus");
     const gridEl = document.getElementById("videoGrid");
     const tagFilterEl = document.getElementById("tagFilter");
     const playerDialog = document.getElementById("playerDialog");
     const player = document.getElementById("player");
     const playerTitle = document.getElementById("playerTitle");
+    const viewVideos = document.getElementById("viewVideos");
+    const viewSettings = document.getElementById("viewSettings");
+    const navVideos = document.getElementById("navVideos");
+    const navSettings = document.getElementById("navSettings");
 
     let currentVideos = [];
 
-    function setStatus(text, isErr = false) {
-      statusEl.textContent = text;
-      statusEl.className = isErr ? "err" : "ok";
+    function setVideoStatus(text, isErr = false) {
+      videoStatusEl.textContent = text;
+      videoStatusEl.className = "inline-status " + (isErr ? "err" : "ok");
     }
+
+    function setSettingsStatus(text, isErr = false) {
+      settingsStatusEl.textContent = text;
+      settingsStatusEl.className = "inline-status " + (isErr ? "err" : "ok");
+    }
+
+    function showView(which) {
+      const isVideos = which === "videos";
+      viewVideos.classList.toggle("hidden", !isVideos);
+      viewSettings.classList.toggle("hidden", isVideos);
+      navVideos.classList.toggle("active", isVideos);
+      navSettings.classList.toggle("active", !isVideos);
+      if (!isVideos) {
+        loadStatsSummary();
+      }
+    }
+
+    navVideos.addEventListener("click", () => showView("videos"));
+    navSettings.addEventListener("click", () => showView("settings"));
 
     function fmtSize(bytes) {
       const units = ["B", "KB", "MB", "GB", "TB"];
@@ -148,6 +213,9 @@
       document.getElementById("llmApiKey").value = llm.api_key || "";
       document.getElementById("llmMaxCandidates").value = Number(llm.max_candidates || 120);
       document.getElementById("llmEnabled").checked = !!llm.enabled;
+      const st = data.stats || {};
+      document.getElementById("statsSamplingEnabled").checked = !!st.performance_sampling_enabled;
+      document.getElementById("statsSampleSize").value = Number(st.sample_size || 30);
     }
 
     async function saveConfig() {
@@ -163,21 +231,84 @@
         max_candidates: Number(document.getElementById("llmMaxCandidates").value || 120),
         enabled: document.getElementById("llmEnabled").checked
       };
+      const stats = {
+        performance_sampling_enabled: document.getElementById("statsSamplingEnabled").checked,
+        sample_size: Number(document.getElementById("statsSampleSize").value || 30)
+      };
       const r = await fetch("/api/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ data_dir: dataDir, library_dirs: libraryDirs, llm })
+        body: JSON.stringify({ data_dir: dataDir, library_dirs: libraryDirs, llm, stats })
       });
       const data = await r.json();
-      if (data.ok) setStatus("配置保存成功");
-      else setStatus("配置保存失败", true);
+      if (data.ok) setSettingsStatus("配置已保存");
+      else setSettingsStatus("配置保存失败", true);
+    }
+
+    function renderStatsSummary(data) {
+      const db = data.db || {};
+      const disk = data.disk || {};
+      document.getElementById("statsSummaryBox").innerHTML = `
+        <dl class="stats-dl">
+          <dt>视频条数</dt><dd>${db.video_count ?? 0}</dd>
+          <dt>标签数</dt><dd>${db.tag_count ?? 0}</dd>
+          <dt>标签关联数</dt><dd>${db.video_tag_links ?? 0}</dd>
+          <dt>总占用（索引）</dt><dd>${fmtSize(db.total_bytes)}</dd>
+          <dt>总时长（索引）</dt><dd>${fmtDuration(db.total_duration_sec)}</dd>
+          <dt>平均时长</dt><dd>${fmtDuration(db.avg_duration_sec)}</dd>
+          <dt>总播放计数</dt><dd>${db.total_watch_events ?? 0}</dd>
+          <dt>有封面</dt><dd>${db.videos_with_cover ?? 0}</dd>
+          <dt>数据目录</dt><dd>${disk.data_dir || "-"}</dd>
+          <dt>磁盘剩余</dt><dd>${disk.disk_free_gb ?? "-"} GB / 共 ${disk.disk_total_gb ?? "-"} GB（已用约 ${disk.disk_used_percent ?? "-"}%）</dd>
+          <dt>数据库文件</dt><dd>${disk.db_file_mb ?? "-"} MB</dd>
+          <dt>封面目录</dt><dd>${disk.covers_dir_mb ?? "-"} MB（${disk.cover_file_count ?? 0} 个文件）</dd>
+        </dl>
+      `;
+    }
+
+    async function loadStatsSummary() {
+      try {
+        const r = await fetch("/api/stats/summary");
+        const data = await r.json();
+        if (data.ok) renderStatsSummary(data);
+      } catch (e) {
+        document.getElementById("statsSummaryBox").textContent = "加载汇总失败: " + e;
+      }
+    }
+
+    function renderStatsSample(data) {
+      const sys = data.system || {};
+      const io = data.io_sample || {};
+      let sysHtml = "";
+      if (sys.psutil_error) {
+        sysHtml = `<p class="muted">系统性能：${sys.psutil_error}（可 pip install psutil）</p>`;
+      } else {
+        sysHtml = `<p>CPU：${sys.cpu_percent ?? "-"}% &nbsp; 内存：${sys.memory_percent ?? "-"}%（${sys.memory_used_gb ?? "-"}/${sys.memory_total_gb ?? "-"} GB）</p>`;
+      }
+      document.getElementById("statsSampleBox").innerHTML = `
+        ${sysHtml}
+        <p>抽样 ${io.sample_n ?? 0} 条：stat 合计 <b>${io.stat_ms ?? 0}</b> ms；读取 4KB 合计 <b>${io.read_4k_ms ?? 0}</b> ms；缺失文件 ${io.missing_files ?? 0}</p>
+      `;
+    }
+
+    async function runStatsSample() {
+      const sample_size = Number(document.getElementById("statsSampleSize").value || 30);
+      document.getElementById("statsSampleBox").textContent = "正在抽样…";
+      const r = await fetch("/api/stats/sample", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sample_size })
+      });
+      const data = await r.json();
+      if (data.ok) renderStatsSample(data);
+      else document.getElementById("statsSampleBox").textContent = "抽样失败";
     }
 
     function renderVideos(videos) {
       currentVideos = videos;
       gridEl.innerHTML = "";
       if (!videos.length) {
-        gridEl.innerHTML = "<div class='empty'>暂无视频，请先扫描目录。</div>";
+        gridEl.innerHTML = "<div class='empty'>暂无视频，请先在设置中扫描目录。</div>";
         return;
       }
       videos.forEach(v => {
@@ -221,23 +352,21 @@
       tagFilterEl.innerHTML = `<option value="">全部标签</option>` + (data.tags || []).map(t => `<option value="${t.name}">${t.name}${t.is_auto ? " (自动)" : ""}</option>`).join("");
       tagFilterEl.value = oldTag;
       renderVideos(data.videos || []);
-      setStatus(`已加载 ${data.videos.length} 个视频`);
+      setVideoStatus(`已加载 ${data.videos.length} 个视频`);
     }
 
     async function scanVideos() {
-      setStatus("正在扫描视频（仅索引元数据，不生成封面）...");
+      setSettingsStatus("正在扫描视频（仅索引，不生成封面）...");
       const r = await fetch("/api/scan", { method: "POST" });
       const data = await r.json();
       if (data.ok) {
-        setStatus(`扫描完成：新增 ${data.created}，更新 ${data.updated}，跳过 ${data.skipped}。需要封面请点击「刷新封面」`);
-        await queryVideos();
-      } else {
-        setStatus("扫描失败", true);
-      }
+        setSettingsStatus(`扫描完成：新增 ${data.created}，更新 ${data.updated}，跳过 ${data.skipped}`);
+        if (!viewSettings.classList.contains("hidden")) loadStatsSummary();
+      } else setSettingsStatus("扫描失败", true);
     }
 
     async function refreshCovers(onlyMissing) {
-      setStatus(onlyMissing ? "正在刷新封面（仅缺封面）..." : "正在重新生成全部封面，请稍候...");
+      setSettingsStatus(onlyMissing ? "正在刷新封面（仅缺封面）..." : "正在重新生成全部封面...");
       const r = await fetch("/api/covers/refresh", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -245,39 +374,34 @@
       });
       const data = await r.json();
       if (!data.ok) {
-        setStatus("刷新封面失败", true);
+        setSettingsStatus("刷新封面失败", true);
         return;
       }
-      let msg = `封面处理完成：成功 ${data.success}，失败 ${data.failed}`;
+      let msg = `封面：成功 ${data.success}，失败 ${data.failed}`;
       if (data.sample_errors && data.sample_errors.length) {
         msg += " | 示例: " + data.sample_errors.join("；");
       }
-      setStatus(msg, data.failed > 0);
-      await queryVideos();
+      setSettingsStatus(msg, data.failed > 0);
     }
 
     async function refreshOneCover(videoId) {
-      setStatus("正在刷新该视频封面...");
+      setVideoStatus("正在刷新该视频封面...");
       const r = await fetch(`/api/videos/${videoId}/cover/refresh`, { method: "POST" });
       const data = await r.json();
       if (data.ok) {
-        setStatus("该视频封面已刷新");
+        setVideoStatus("封面已刷新");
         await queryVideos();
-      } else {
-        setStatus(data.error || "刷新失败", true);
-      }
+      } else setVideoStatus(data.error || "刷新失败", true);
     }
 
     async function autoGenerateTags() {
-      setStatus("正在根据文件名生成标签...");
+      setSettingsStatus("正在生成标签...");
       const r = await fetch("/api/tags/auto-generate", { method: "POST" });
       const data = await r.json();
       if (data.ok) {
-        setStatus(`自动标签完成：生成 ${data.generated_tags}，关联 ${data.attached}`);
-        await queryVideos();
-      } else {
-        setStatus("自动标签失败", true);
-      }
+        setSettingsStatus(`自动标签：生成 ${data.generated_tags}，关联 ${data.attached}`);
+        if (!viewSettings.classList.contains("hidden")) loadStatsSummary();
+      } else setSettingsStatus("自动标签失败", true);
     }
 
     async function addTag(videoId) {
@@ -290,11 +414,9 @@
       });
       const data = await r.json();
       if (data.ok) {
-        setStatus("标签添加成功");
+        setVideoStatus("标签已添加");
         await queryVideos();
-      } else {
-        setStatus(data.error || "标签添加失败", true);
-      }
+      } else setVideoStatus(data.error || "失败", true);
     }
 
     async function uploadCover(videoId) {
@@ -308,11 +430,9 @@
         const r = await fetch(`/api/videos/${videoId}/cover`, { method: "POST", body: fd });
         const data = await r.json();
         if (data.ok) {
-          setStatus("封面更新成功");
+          setVideoStatus("封面已更新");
           await queryVideos();
-        } else {
-          setStatus(data.error || "封面更新失败", true);
-        }
+        } else setVideoStatus(data.error || "失败", true);
       };
       input.click();
     }
@@ -331,10 +451,10 @@
       const question = document.getElementById("aiQuestionInput").value.trim();
       const topK = Number(document.getElementById("aiTopKInput").value || 30);
       if (!question) {
-        setStatus("请输入AI搜索问题", true);
+        setVideoStatus("请输入 AI 搜索问题", true);
         return;
       }
-      setStatus("正在调用模型检索...");
+      setVideoStatus("正在调用模型检索...");
       const r = await fetch("/api/ai/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -342,12 +462,12 @@
       });
       const data = await r.json();
       if (!data.ok) {
-        setStatus(data.error || "AI搜索失败", true);
+        setVideoStatus(data.error || "AI 搜索失败", true);
         return;
       }
       renderVideos(data.videos || []);
       document.getElementById("aiReason").textContent = `来源: ${data.source} | ${data.reason || ""}`;
-      setStatus(`AI 搜索完成，返回 ${data.videos.length} 个结果`);
+      setVideoStatus(`AI 搜索完成，${data.videos.length} 条结果`);
     }
 
     function exportAiData() {
@@ -358,13 +478,25 @@
     document.getElementById("scanBtn").addEventListener("click", scanVideos);
     document.getElementById("refreshCoversMissingBtn").addEventListener("click", () => refreshCovers(true));
     document.getElementById("refreshCoversAllBtn").addEventListener("click", () => {
-      if (!confirm("确定要为所有视频重新生成默认封面吗？（耗时取决于视频数量）")) return;
+      if (!confirm("确定要为所有视频重新生成默认封面吗？")) return;
       refreshCovers(false);
     });
     document.getElementById("autoTagBtn").addEventListener("click", autoGenerateTags);
     document.getElementById("exportAiDataBtn").addEventListener("click", exportAiData);
     document.getElementById("queryBtn").addEventListener("click", queryVideos);
     document.getElementById("aiSearchBtn").addEventListener("click", aiSearchVideos);
+    document.getElementById("statsRefreshSummaryBtn").addEventListener("click", loadStatsSummary);
+    document.getElementById("statsRunSampleBtn").addEventListener("click", async () => {
+      await saveConfig();
+      await runStatsSample();
+    });
+    document.getElementById("statsSamplingEnabled").addEventListener("change", async () => {
+      await saveConfig();
+      if (document.getElementById("statsSamplingEnabled").checked) {
+        await runStatsSample();
+      }
+    });
+
     document.getElementById("searchInput").addEventListener("keydown", e => {
       if (e.key === "Enter") queryVideos();
     });

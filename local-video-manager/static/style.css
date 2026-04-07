@@ -9,17 +9,45 @@ body {
   color: #f0f0f0;
 }
 
-header {
-  padding: 20px 24px 8px;
+.site-header {
+  padding: 16px 24px 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #2a2a2a;
 }
 
-header h1 {
+.site-title h1 {
   margin: 0;
+  font-size: 1.5rem;
 }
 
-header p {
-  margin: 8px 0 0;
-  color: #b6b6b6;
+.subtitle {
+  margin: 6px 0 0;
+  color: #9a9a9a;
+  font-size: 13px;
+}
+
+.top-nav {
+  display: flex;
+  gap: 8px;
+}
+
+.nav-btn {
+  min-width: 100px;
+  font-weight: 600;
+}
+
+.nav-btn.active {
+  border-color: #6c8bff;
+  background: #2a3358;
+  color: #fff;
+}
+
+.view.hidden {
+  display: none;
 }
 
 .panel {
@@ -92,17 +120,60 @@ button:hover {
   grid-template-columns: 2fr 120px auto;
 }
 
-#status {
-  margin-top: 8px;
+.inline-status {
+  margin: 8px 24px;
   min-height: 22px;
+  font-size: 13px;
 }
 
-#status.ok {
+.inline-status.ok {
   color: #9de58e;
 }
 
-#status.err {
+.inline-status.err {
   color: #ff8f8f;
+}
+
+.small {
+  font-size: 12px;
+  margin-top: 0;
+}
+
+.stats-sub {
+  margin: 18px 0 10px;
+  font-size: 15px;
+  color: #ccc;
+}
+
+.stats-box {
+  margin-top: 10px;
+  padding: 10px;
+  background: #141414;
+  border-radius: 8px;
+  border: 1px solid #333;
+}
+
+.stats-box.mono {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 13px;
+}
+
+.stats-dl {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 6px 12px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.stats-dl dt {
+  color: #888;
+  margin: 0;
+}
+
+.stats-dl dd {
+  margin: 0;
+  word-break: break-all;
 }
 
 .grid {
