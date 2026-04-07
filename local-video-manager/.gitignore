@@ -1,0 +1,41 @@
+# ========== 本地 / 运行时（换电脑勿提交，避免路径与密钥泄露）==========
+# 用户配置（含本机路径、API Key）；首次使用请复制 config.json.example 为 config.json
+config.json
+
+# 数据目录：SQLite、封面、及程序在 data_dir 下生成的文件（默认 ./data）
+data/
+
+# 运行日志
+local-video-manager.log
+*.log
+
+# 若数据库曾被放在项目根目录（旧版本或手动移动）
+*.db
+video_manager.db
+
+# ========== Python ==========
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+
+# ========== 环境与密钥 ==========
+.env
+.env.*
+!.env.example
+
+# ========== 操作系统 ==========
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ========== IDE（可选，团队若需共享运行配置可删 .idea/ 行）==========
+.idea/
+.vscode/
+*.swp
+*.swo

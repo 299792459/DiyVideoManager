@@ -1,0 +1,24 @@
+# ========== IDE / 编辑器（勿提交本机路径与工作区状态）==========
+# JetBrains：含 vcs.xml、modules.xml、misc.xml、*.iml 等
+.idea/
+
+# VS Code / Cursor
+.vscode/
+
+# ========== 日志（任何目录）==========
+*.log
+
+# ========== Python ==========
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.pyc
+
+# ========== 系统 ==========
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 子项目 local-video-manager 另有 .gitignore（config、data 等）
+# 见 local-video-manager/.gitignore

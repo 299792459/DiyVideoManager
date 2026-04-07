@@ -20,40 +20,56 @@
 
   <!-- ========== 视频 ========== -->
   <div id="viewVideos" class="view">
-    <section class="panel">
-      <h2>筛选与搜索</h2>
-      <div class="toolbar">
-        <input id="searchInput" type="text" placeholder="输入关键词或意图词，例如：丝袜 / 黑丝 / 教程" />
-        <select id="tagFilter">
-          <option value="">全部标签</option>
-        </select>
-        <select id="sortSelect">
-          <option value="modified_at">最近修改</option>
-          <option value="watch_count">观看次数</option>
-          <option value="duration_sec">时长</option>
-          <option value="size_bytes">文件大小</option>
-          <option value="filename">文件名</option>
-          <option value="hot">热门度</option>
-        </select>
-        <select id="orderSelect">
-          <option value="desc">降序</option>
-          <option value="asc">升序</option>
-        </select>
-        <button id="queryBtn">查询</button>
+    <section class="panel panel-compact video-search-panel">
+      <div class="video-search-title">搜索与列表</div>
+      <div class="compact-search">
+        <div class="compact-row">
+          <input id="searchInput" type="text" class="inp-grow" placeholder="关键词 / 意图词" />
+          <select id="tagFilter" class="inp-tight" title="标签">
+            <option value="">全部标签</option>
+          </select>
+          <select id="sortSelect" class="inp-sort" title="排序字段">
+            <option value="modified_at">最近修改</option>
+            <option value="watch_count">观看次数</option>
+            <option value="duration_sec">时长</option>
+            <option value="size_bytes">文件大小</option>
+            <option value="filename">文件名</option>
+            <option value="hot">热门度</option>
+          </select>
+          <select id="orderSelect" class="inp-order" title="顺序">
+            <option value="desc">降序</option>
+            <option value="asc">升序</option>
+          </select>
+          <button id="queryBtn" type="button">查询</button>
+        </div>
+        <div class="compact-row compact-row-ai">
+          <span class="compact-label">AI</span>
+          <input id="aiQuestionInput" type="text" class="inp-grow" placeholder="向模型提问筛选视频…" />
+          <input id="aiTopKInput" type="number" min="1" max="100" value="30" class="inp-num" title="最多返回条数" />
+          <button id="aiSearchBtn" type="button">AI搜索</button>
+        </div>
+        <div id="aiReason" class="ai-reason-line muted"></div>
+        <div class="compact-row compact-row-tools">
+          <label class="compact-inline">每页 <select id="perPageSelect" class="inp-per-page">
+            <option value="12">12</option>
+            <option value="24" selected>24</option>
+            <option value="36">36</option>
+            <option value="48">48</option>
+            <option value="72">72</option>
+            <option value="96">96</option>
+          </select></label>
+          <button type="button" id="prevPageBtn" class="page-btn">上一页</button>
+          <span id="pageInfo" class="page-info">第 1 / 1 页（共 0 条）</span>
+          <button type="button" id="nextPageBtn" class="page-btn">下一页</button>
+          <span class="compact-divider" aria-hidden="true"></span>
+          <label class="compact-inline shrink-0" for="cardSizeRange">卡片</label>
+          <input type="range" id="cardSizeRange" min="160" max="480" step="4" value="280" title="拖动调整卡片宽度" />
+          <span id="cardSizeLabel" class="size-label">280px</span>
+        </div>
       </div>
     </section>
 
-    <section class="panel">
-      <h2>AI 提问式搜索</h2>
-      <div class="toolbar ai-toolbar">
-        <input id="aiQuestionInput" type="text" placeholder="例如：找出最近一个月看得最多的教程类视频" />
-        <input id="aiTopKInput" type="number" min="1" max="100" value="30" />
-        <button id="aiSearchBtn">AI搜索</button>
-      </div>
-      <div id="aiReason" class="muted"></div>
-    </section>
-
-    <div id="videoStatus" class="inline-status"></div>
+    <div id="videoStatus" class="inline-status inline-status-tight"></div>
 
     <section id="videoGrid" class="grid"></section>
   </div>
@@ -153,6 +169,13 @@
     const navSettings = document.getElementById("navSettings");
 
     let currentVideos = [];
+    /** browse：服务端分页；ai：前端对 aiFullVideos 分页 */
+    let listMode = "browse";
+    let aiFullVideos = [];
+    let currentPage = 1;
+
+    const LS_CARD = "vm_grid_card_min";
+    const LS_PER_PAGE = "vm_per_page";
 
     function setVideoStatus(text, isErr = false) {
       videoStatusEl.textContent = text;
@@ -173,6 +196,59 @@
       if (!isVideos) {
         loadStatsSummary();
       }
+    }
+
+    function applyCardSize(px) {
+      const w = Math.max(160, Math.min(480, Number(px) || 280));
+      document.documentElement.style.setProperty("--grid-card-min", w + "px");
+      const range = document.getElementById("cardSizeRange");
+      const label = document.getElementById("cardSizeLabel");
+      if (range) range.value = String(w);
+      if (label) label.textContent = w + "px";
+      try {
+        localStorage.setItem(LS_CARD, String(w));
+      } catch (e) {}
+    }
+
+    function updatePaginationUI(data) {
+      const total = data.total != null ? data.total : (data.videos && data.videos.length) || 0;
+      const page = data.page != null ? data.page : 1;
+      const tp = data.total_pages != null ? data.total_pages : 1;
+      document.getElementById("pageInfo").textContent = `第 ${page} / ${tp} 页（共 ${total} 条）`;
+      document.getElementById("prevPageBtn").disabled = page <= 1;
+      document.getElementById("nextPageBtn").disabled = page >= tp;
+    }
+
+    function updatePaginationUIForAi() {
+      const perPage = Number(document.getElementById("perPageSelect").value);
+      const total = aiFullVideos.length;
+      const totalPages = Math.max(1, Math.ceil(total / perPage) || 1);
+      if (currentPage > totalPages) currentPage = totalPages;
+      if (currentPage < 1) currentPage = 1;
+      document.getElementById("pageInfo").textContent = `第 ${currentPage} / ${totalPages} 页（共 ${total} 条，AI 结果）`;
+      document.getElementById("prevPageBtn").disabled = currentPage <= 1;
+      document.getElementById("nextPageBtn").disabled = currentPage >= totalPages;
+    }
+
+    function renderAiPage() {
+      if (!aiFullVideos.length) {
+        renderVideos([]);
+        document.getElementById("pageInfo").textContent = "第 1 / 1 页（共 0 条，AI 结果）";
+        document.getElementById("prevPageBtn").disabled = true;
+        document.getElementById("nextPageBtn").disabled = true;
+        setVideoStatus("AI 无匹配结果");
+        return;
+      }
+      const perPage = Number(document.getElementById("perPageSelect").value);
+      const total = aiFullVideos.length;
+      const totalPages = Math.max(1, Math.ceil(total / perPage) || 1);
+      if (currentPage > totalPages) currentPage = totalPages;
+      if (currentPage < 1) currentPage = 1;
+      const start = (currentPage - 1) * perPage;
+      const slice = aiFullVideos.slice(start, start + perPage);
+      renderVideos(slice);
+      updatePaginationUIForAi();
+      setVideoStatus(`本页 ${slice.length} 条（AI 结果）`);
     }
 
     navVideos.addEventListener("click", () => showView("videos"));
@@ -340,19 +416,32 @@
       });
     }
 
-    async function queryVideos() {
+    async function queryVideos(page) {
+      listMode = "browse";
+      if (page != null && page >= 1) currentPage = page;
       const q = document.getElementById("searchInput").value.trim();
       const tag = tagFilterEl.value;
       const sort = document.getElementById("sortSelect").value;
       const order = document.getElementById("orderSelect").value;
-      const params = new URLSearchParams({ search: q, tag, sort, order });
+      const perPage = Number(document.getElementById("perPageSelect").value);
+      const params = new URLSearchParams({
+        search: q,
+        tag,
+        sort,
+        order,
+        page: String(currentPage),
+        per_page: String(perPage)
+      });
       const r = await fetch(`/api/videos?${params.toString()}`);
       const data = await r.json();
       const oldTag = tagFilterEl.value;
       tagFilterEl.innerHTML = `<option value="">全部标签</option>` + (data.tags || []).map(t => `<option value="${t.name}">${t.name}${t.is_auto ? " (自动)" : ""}</option>`).join("");
       tagFilterEl.value = oldTag;
+      if (data.page != null) currentPage = data.page;
       renderVideos(data.videos || []);
-      setVideoStatus(`已加载 ${data.videos.length} 个视频`);
+      updatePaginationUI(data);
+      const total = data.total != null ? data.total : (data.videos || []).length;
+      setVideoStatus(`已加载 第 ${currentPage} 页，本页 ${(data.videos || []).length} 条，合计 ${total} 条`);
     }
 
     async function scanVideos() {
@@ -362,6 +451,8 @@
       if (data.ok) {
         setSettingsStatus(`扫描完成：新增 ${data.created}，更新 ${data.updated}，跳过 ${data.skipped}`);
         if (!viewSettings.classList.contains("hidden")) loadStatsSummary();
+        listMode = "browse";
+        await queryVideos(1);
       } else setSettingsStatus("扫描失败", true);
     }
 
@@ -389,8 +480,14 @@
       const r = await fetch(`/api/videos/${videoId}/cover/refresh`, { method: "POST" });
       const data = await r.json();
       if (data.ok) {
+        if (listMode === "ai" && data.cover_url) {
+          const v = aiFullVideos.find(x => x.id === videoId);
+          if (v) v.cover_url = data.cover_url;
+          renderAiPage();
+        } else {
+          await queryVideos(currentPage);
+        }
         setVideoStatus("封面已刷新");
-        await queryVideos();
       } else setVideoStatus(data.error || "刷新失败", true);
     }
 
@@ -401,6 +498,8 @@
       if (data.ok) {
         setSettingsStatus(`自动标签：生成 ${data.generated_tags}，关联 ${data.attached}`);
         if (!viewSettings.classList.contains("hidden")) loadStatsSummary();
+        listMode = "browse";
+        await queryVideos(1);
       } else setSettingsStatus("自动标签失败", true);
     }
 
@@ -414,8 +513,17 @@
       });
       const data = await r.json();
       if (data.ok) {
+        if (listMode === "ai") {
+          const v = aiFullVideos.find(x => x.id === videoId);
+          if (v) {
+            v.tags = v.tags || [];
+            if (!v.tags.includes(tag.trim())) v.tags.push(tag.trim());
+          }
+          renderAiPage();
+        } else {
+          await queryVideos(currentPage);
+        }
         setVideoStatus("标签已添加");
-        await queryVideos();
       } else setVideoStatus(data.error || "失败", true);
     }
 
@@ -430,8 +538,14 @@
         const r = await fetch(`/api/videos/${videoId}/cover`, { method: "POST", body: fd });
         const data = await r.json();
         if (data.ok) {
+          if (listMode === "ai" && data.cover_url) {
+            const v = aiFullVideos.find(x => x.id === videoId);
+            if (v) v.cover_url = data.cover_url;
+            renderAiPage();
+          } else {
+            await queryVideos(currentPage);
+          }
           setVideoStatus("封面已更新");
-          await queryVideos();
         } else setVideoStatus(data.error || "失败", true);
       };
       input.click();
@@ -444,7 +558,13 @@
       player.src = `/api/videos/${videoId}/stream`;
       playerDialog.showModal();
       await fetch(`/api/videos/${videoId}/play`, { method: "POST" });
-      await queryVideos();
+      if (listMode === "ai") {
+        const v = aiFullVideos.find(x => x.id === videoId);
+        if (v) v.watch_count = (v.watch_count || 0) + 1;
+        renderAiPage();
+      } else {
+        await queryVideos(currentPage);
+      }
     }
 
     async function aiSearchVideos() {
@@ -465,9 +585,11 @@
         setVideoStatus(data.error || "AI 搜索失败", true);
         return;
       }
-      renderVideos(data.videos || []);
+      aiFullVideos = data.videos || [];
+      listMode = "ai";
+      currentPage = 1;
       document.getElementById("aiReason").textContent = `来源: ${data.source} | ${data.reason || ""}`;
-      setVideoStatus(`AI 搜索完成，${data.videos.length} 条结果`);
+      renderAiPage();
     }
 
     function exportAiData() {
@@ -483,7 +605,40 @@
     });
     document.getElementById("autoTagBtn").addEventListener("click", autoGenerateTags);
     document.getElementById("exportAiDataBtn").addEventListener("click", exportAiData);
-    document.getElementById("queryBtn").addEventListener("click", queryVideos);
+    document.getElementById("queryBtn").addEventListener("click", () => queryVideos(1));
+    document.getElementById("prevPageBtn").addEventListener("click", () => {
+      if (listMode === "ai") {
+        if (currentPage > 1) {
+          currentPage--;
+          renderAiPage();
+        }
+      } else if (currentPage > 1) {
+        queryVideos(currentPage - 1);
+      }
+    });
+    document.getElementById("nextPageBtn").addEventListener("click", () => {
+      if (listMode === "ai") {
+        const perPage = Number(document.getElementById("perPageSelect").value);
+        const totalPages = Math.max(1, Math.ceil(aiFullVideos.length / perPage) || 1);
+        if (currentPage < totalPages) {
+          currentPage++;
+          renderAiPage();
+        }
+      } else {
+        queryVideos(currentPage + 1);
+      }
+    });
+    document.getElementById("perPageSelect").addEventListener("change", () => {
+      try {
+        localStorage.setItem(LS_PER_PAGE, document.getElementById("perPageSelect").value);
+      } catch (e) {}
+      currentPage = 1;
+      if (listMode === "ai") renderAiPage();
+      else queryVideos(1);
+    });
+    document.getElementById("cardSizeRange").addEventListener("input", (e) => {
+      applyCardSize(Number(e.target.value));
+    });
     document.getElementById("aiSearchBtn").addEventListener("click", aiSearchVideos);
     document.getElementById("statsRefreshSummaryBtn").addEventListener("click", loadStatsSummary);
     document.getElementById("statsRunSampleBtn").addEventListener("click", async () => {
@@ -498,7 +653,7 @@
     });
 
     document.getElementById("searchInput").addEventListener("keydown", e => {
-      if (e.key === "Enter") queryVideos();
+      if (e.key === "Enter") queryVideos(1);
     });
     document.getElementById("aiQuestionInput").addEventListener("keydown", e => {
       if (e.key === "Enter") aiSearchVideos();
@@ -521,8 +676,19 @@
     });
 
     (async function init() {
+      try {
+        const pp = localStorage.getItem(LS_PER_PAGE);
+        if (pp) document.getElementById("perPageSelect").value = pp;
+      } catch (e) {}
+      try {
+        const c = localStorage.getItem(LS_CARD);
+        if (c) applyCardSize(c);
+        else applyCardSize(280);
+      } catch (e) {
+        applyCardSize(280);
+      }
       await loadConfig();
-      await queryVideos();
+      await queryVideos(1);
     })();
   </script>
 </body>

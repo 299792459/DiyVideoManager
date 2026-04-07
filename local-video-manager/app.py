@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import math
 import os
 import random
 import re
@@ -869,10 +870,15 @@ def api_video_cover_refresh(video_id: int):
         return jsonify({"ok": False, "error": "not found"}), 404
     ok, msg = refresh_cover_for_row(conn, row, cover_dir)
     conn.commit()
+    cover_url = ""
+    if ok:
+        row2 = conn.execute("SELECT cover_file FROM videos WHERE id=?", (video_id,)).fetchone()
+        if row2 and row2["cover_file"]:
+            cover_url = f"/api/covers/{row2['cover_file']}"
     conn.close()
     if ok:
         LOG.info("单条刷新封面成功 video_id=%s filename=%s", video_id, row["filename"])
-        return jsonify({"ok": True})
+        return jsonify({"ok": True, "cover_url": cover_url})
     LOG.warning("单条刷新封面失败 video_id=%s %s", video_id, msg)
     return jsonify({"ok": False, "error": msg}), 500
 
@@ -884,12 +890,25 @@ def api_videos():
     sort = (request.args.get("sort") or "modified_at").strip()
     order = (request.args.get("order") or "desc").strip().lower()
     order = "desc" if order not in ("asc", "desc") else order
+    try:
+        page = int(request.args.get("page") or 1)
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        per_page = int(request.args.get("per_page") or 24)
+    except (TypeError, ValueError):
+        per_page = 24
+    page = max(1, page)
+    per_page = max(6, min(per_page, 200))
+
     LOG.info(
-        "列表查询 search=%r tag=%r sort=%s order=%s",
+        "列表查询 search=%r tag=%r sort=%s order=%s page=%s per_page=%s",
         search[:80] if search else "",
         tag_filter,
         sort,
         order,
+        page,
+        per_page,
     )
 
     conn = get_conn()
@@ -924,12 +943,23 @@ def api_videos():
     reverse = order == "desc"
     videos.sort(key=sort_key, reverse=reverse)
 
+    total = len(videos)
+    total_pages = max(1, math.ceil(total / per_page)) if total else 1
+    if page > total_pages:
+        page = total_pages
+    start = (page - 1) * per_page
+    page_videos = videos[start : start + per_page]
+
     tags = conn.execute("SELECT id, name, is_auto FROM tags ORDER BY is_auto DESC, name ASC").fetchall()
     conn.close()
     return jsonify(
         {
-            "videos": videos,
+            "videos": page_videos,
             "tags": [{"id": t["id"], "name": t["name"], "is_auto": bool(t["is_auto"])} for t in tags],
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": total_pages,
         }
     )
 
