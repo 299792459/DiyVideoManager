@@ -22,34 +22,46 @@
   <div id="viewVideos" class="view">
     <section class="panel panel-compact video-search-panel">
       <div class="video-search-title">搜索与列表</div>
-      <div class="compact-search">
-        <div class="compact-row">
-          <input id="searchInput" type="text" class="inp-grow" placeholder="关键词 / 意图词" />
-          <select id="tagFilter" class="inp-tight" title="标签">
-            <option value="">全部标签</option>
-          </select>
-          <select id="sortSelect" class="inp-sort" title="排序字段">
-            <option value="modified_at">最近修改</option>
-            <option value="watch_count">观看次数</option>
-            <option value="duration_sec">时长</option>
-            <option value="size_bytes">文件大小</option>
-            <option value="filename">文件名</option>
-            <option value="hot">热门度</option>
-          </select>
-          <select id="orderSelect" class="inp-order" title="顺序">
-            <option value="desc">降序</option>
-            <option value="asc">升序</option>
-          </select>
-          <button id="queryBtn" type="button">查询</button>
+      <div class="search-modules">
+        <div class="search-mod search-mod-browse">
+          <div class="search-mod-h">本地筛选</div>
+          <div class="search-mod-body">
+            <input id="searchInput" type="text" class="inp-block" placeholder="关键词 / 意图词" />
+            <div class="search-mod-inline">
+              <select id="tagFilter" class="inp-tight" title="标签">
+                <option value="">全部标签</option>
+              </select>
+              <select id="sortSelect" class="inp-sort" title="排序">
+                <option value="modified_at">最近修改</option>
+                <option value="watch_count">观看次数</option>
+                <option value="duration_sec">时长</option>
+                <option value="size_bytes">文件大小</option>
+                <option value="filename">文件名</option>
+                <option value="hot">热门度</option>
+              </select>
+              <select id="orderSelect" class="inp-order" title="顺序">
+                <option value="desc">降序</option>
+                <option value="asc">升序</option>
+              </select>
+              <button id="queryBtn" type="button">查询</button>
+            </div>
+          </div>
         </div>
-        <div class="compact-row compact-row-ai">
-          <span class="compact-label">AI</span>
-          <input id="aiQuestionInput" type="text" class="inp-grow" placeholder="向模型提问筛选视频…" />
-          <input id="aiTopKInput" type="number" min="1" max="100" value="30" class="inp-num" title="最多返回条数" />
-          <button id="aiSearchBtn" type="button">AI搜索</button>
+        <div class="search-mod search-mod-ai">
+          <div class="search-mod-h">AI 提问</div>
+          <div class="search-mod-body">
+            <input id="aiQuestionInput" type="text" class="inp-block" placeholder="向模型描述要找的视频…" />
+            <div class="search-mod-inline">
+              <label class="compact-inline ai-topk-wrap" title="最多返回条数">条数 <input id="aiTopKInput" type="number" min="1" max="100" value="30" class="inp-num" /></label>
+              <button id="aiSearchBtn" type="button">AI搜索</button>
+            </div>
+          </div>
         </div>
-        <div id="aiReason" class="ai-reason-line muted"></div>
-        <div class="compact-row compact-row-tools">
+      </div>
+      <div id="aiReason" class="ai-reason-line muted"></div>
+      <div class="search-mod-tools">
+        <span class="search-mod-tools-label">分页与外观</span>
+        <div class="search-mod-tools-row">
           <label class="compact-inline">每页 <select id="perPageSelect" class="inp-per-page">
             <option value="12">12</option>
             <option value="24" selected>24</option>
@@ -62,7 +74,7 @@
           <span id="pageInfo" class="page-info">第 1 / 1 页（共 0 条）</span>
           <button type="button" id="nextPageBtn" class="page-btn">下一页</button>
           <span class="compact-divider" aria-hidden="true"></span>
-          <label class="compact-inline shrink-0" for="cardSizeRange">卡片</label>
+          <label class="compact-inline shrink-0" for="cardSizeRange">卡片宽</label>
           <input type="range" id="cardSizeRange" min="160" max="480" step="4" value="280" title="拖动调整卡片宽度" />
           <span id="cardSizeLabel" class="size-label">280px</span>
         </div>
