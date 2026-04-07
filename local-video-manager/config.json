@@ -1,0 +1,13 @@
+{
+  "data_dir": "C:\\Users\\JingChen\\Videos",
+  "library_dirs": [
+    "C:\\Users\\JingChen\\Videos"
+  ],
+  "llm": {
+    "base_url": "https://api.openai.com/v1",
+    "api_key": "",
+    "model": "gpt-4o-mini",
+    "max_candidates": 120,
+    "enabled": false
+  }
+}

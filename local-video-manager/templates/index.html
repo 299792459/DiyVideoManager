@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>本地视频管理</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>本地视频管理</h1>
+    <p>支持智能搜索、标签管理、自动标签、排序和观看次数统计</p>
+  </header>
+
+  <section class="panel">
+    <h2>基础设置（可指定数据目录，避免固定 C 盘）</h2>
+    <div class="row">
+      <label>数据目录</label>
+      <input id="dataDir" type="text" placeholder="例如 D:\video-manager-data" />
+    </div>
+    <div class="row">
+      <label>视频目录（多个用分号分隔）</label>
+      <input id="libraryDirs" type="text" placeholder="例如 D:\Videos;E:\Archive" />
+    </div>
+    <div class="row">
+      <label>AI 接口 Base URL（OpenAI 兼容）</label>
+      <input id="llmBaseUrl" type="text" placeholder="例如 https://api.openai.com/v1 或你的龙虾网关地址" />
+    </div>
+    <div class="row">
+      <label>AI 模型名</label>
+      <input id="llmModel" type="text" placeholder="例如 gpt-4o-mini / qwen-plus 等" />
+    </div>
+    <div class="row">
+      <label>AI API Key</label>
+      <input id="llmApiKey" type="password" placeholder="可留空（禁用模型检索）" />
+    </div>
+    <div class="row">
+      <label>模型候选池大小（越大越耗 token）</label>
+      <input id="llmMaxCandidates" type="number" min="20" max="500" value="120" />
+    </div>
+    <div class="row">
+      <label>启用模型检索</label>
+      <input id="llmEnabled" type="checkbox" />
+    </div>
+    <div class="actions">
+      <button id="saveConfigBtn">保存配置</button>
+      <button id="scanBtn">扫描视频</button>
+      <button id="refreshCoversMissingBtn" title="为尚未有封面的视频生成默认封面">刷新封面（仅缺封面）</button>
+      <button id="refreshCoversAllBtn" title="重新为所有视频生成默认封面（会覆盖自动封面，不覆盖你手动上传的需自行判断）">重新生成全部封面</button>
+      <button id="autoTagBtn">根据文件名自动打标签</button>
+      <button id="exportAiDataBtn">导出AI数据(JSONL)</button>
+    </div>
+    <div id="status"></div>
+  </section>
+
+  <section class="panel">
+    <h2>筛选与搜索</h2>
+    <div class="toolbar">
+      <input id="searchInput" type="text" placeholder="输入关键词或意图词，例如：丝袜 / 黑丝 / 教程" />
+      <select id="tagFilter">
+        <option value="">全部标签</option>
+      </select>
+      <select id="sortSelect">
+        <option value="modified_at">最近修改</option>
+        <option value="watch_count">观看次数</option>
+        <option value="duration_sec">时长</option>
+        <option value="size_bytes">文件大小</option>
+        <option value="filename">文件名</option>
+        <option value="hot">热门度</option>
+      </select>
+      <select id="orderSelect">
+        <option value="desc">降序</option>
+        <option value="asc">升序</option>
+      </select>
+      <button id="queryBtn">查询</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>AI 提问式搜索（问模型来找视频）</h2>
+    <div class="toolbar ai-toolbar">
+      <input id="aiQuestionInput" type="text" placeholder="例如：找出最近一个月看得最多的黑丝风格视频" />
+      <input id="aiTopKInput" type="number" min="1" max="100" value="30" />
+      <button id="aiSearchBtn">AI搜索</button>
+    </div>
+    <div id="aiReason" class="muted"></div>
+  </section>
+
+  <section id="videoGrid" class="grid"></section>
+
+  <dialog id="playerDialog">
+    <div class="player-wrap">
+      <h3 id="playerTitle"></h3>
+      <video id="player" controls autoplay></video>
+      <div class="actions">
+        <button id="closePlayerBtn">关闭</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script>
+    const statusEl = document.getElementById("status");
+    const gridEl = document.getElementById("videoGrid");
+    const tagFilterEl = document.getElementById("tagFilter");
+    const playerDialog = document.getElementById("playerDialog");
+    const player = document.getElementById("player");
+    const playerTitle = document.getElementById("playerTitle");
+
+    let currentVideos = [];
+
+    function setStatus(text, isErr = false) {
+      statusEl.textContent = text;
+      statusEl.className = isErr ? "err" : "ok";
+    }
+
+    function fmtSize(bytes) {
+      const units = ["B", "KB", "MB", "GB", "TB"];
+      let n = Number(bytes || 0);
+      let idx = 0;
+      while (n >= 1024 && idx < units.length - 1) {
+        n /= 1024;
+        idx++;
+      }
+      return `${n.toFixed(1)} ${units[idx]}`;
+    }
+
+    function fmtDuration(sec) {
+      const s = Math.floor(Number(sec || 0));
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      const x = s % 60;
+      return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(x).padStart(2, "0")}` : `${m}:${String(x).padStart(2, "0")}`;
+    }
+
+    function fmtTime(ts) {
+      if (!ts) return "-";
+      return new Date(ts * 1000).toLocaleString();
+    }
+
+    async function loadConfig() {
+      const r = await fetch("/api/config");
+      const data = await r.json();
+      document.getElementById("dataDir").value = data.data_dir || "";
+      document.getElementById("libraryDirs").value = (data.library_dirs || []).join(";");
+      const llm = data.llm || {};
+      document.getElementById("llmBaseUrl").value = llm.base_url || "";
+      document.getElementById("llmModel").value = llm.model || "";
+      document.getElementById("llmApiKey").value = llm.api_key || "";
+      document.getElementById("llmMaxCandidates").value = Number(llm.max_candidates || 120);
+      document.getElementById("llmEnabled").checked = !!llm.enabled;
+    }
+
+    async function saveConfig() {
+      const dataDir = document.getElementById("dataDir").value.trim();
+      const libraryDirs = document.getElementById("libraryDirs").value
+        .split(";")
+        .map(x => x.trim())
+        .filter(Boolean);
+      const llm = {
+        base_url: document.getElementById("llmBaseUrl").value.trim(),
+        model: document.getElementById("llmModel").value.trim(),
+        api_key: document.getElementById("llmApiKey").value.trim(),
+        max_candidates: Number(document.getElementById("llmMaxCandidates").value || 120),
+        enabled: document.getElementById("llmEnabled").checked
+      };
+      const r = await fetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ data_dir: dataDir, library_dirs: libraryDirs, llm })
+      });
+      const data = await r.json();
+      if (data.ok) setStatus("配置保存成功");
+      else setStatus("配置保存失败", true);
+    }
+
+    function renderVideos(videos) {
+      currentVideos = videos;
+      gridEl.innerHTML = "";
+      if (!videos.length) {
+        gridEl.innerHTML = "<div class='empty'>暂无视频，请先扫描目录。</div>";
+        return;
+      }
+      videos.forEach(v => {
+        const card = document.createElement("article");
+        card.className = "card";
+        const tags = (v.tags || []).map(t => `<span class="tag">${t}</span>`).join("");
+        card.innerHTML = `
+          <div class="cover">
+            ${v.cover_url ? `<img src="${v.cover_url}" alt="${v.filename}" />` : "<div class='no-cover'>无封面</div>"}
+          </div>
+          <div class="content">
+            <h3 title="${v.filename}">${v.filename}</h3>
+            <p class="meta">
+              观看: <b>${v.watch_count}</b> 次 |
+              时长: <b>${fmtDuration(v.duration_sec)}</b> |
+              大小: <b>${fmtSize(v.size_bytes)}</b>
+            </p>
+            <p class="meta">修改时间: ${fmtTime(v.modified_at)}</p>
+            <div class="tags">${tags || "<span class='muted'>暂无标签</span>"}</div>
+            <div class="actions">
+              <button data-act="play" data-id="${v.id}">播放</button>
+              <button data-act="add-tag" data-id="${v.id}">加标签</button>
+              <button data-act="refresh-cover" data-id="${v.id}">刷新封面</button>
+              <button data-act="cover" data-id="${v.id}">换封面</button>
+            </div>
+          </div>
+        `;
+        gridEl.appendChild(card);
+      });
+    }
+
+    async function queryVideos() {
+      const q = document.getElementById("searchInput").value.trim();
+      const tag = tagFilterEl.value;
+      const sort = document.getElementById("sortSelect").value;
+      const order = document.getElementById("orderSelect").value;
+      const params = new URLSearchParams({ search: q, tag, sort, order });
+      const r = await fetch(`/api/videos?${params.toString()}`);
+      const data = await r.json();
+      const oldTag = tagFilterEl.value;
+      tagFilterEl.innerHTML = `<option value="">全部标签</option>` + (data.tags || []).map(t => `<option value="${t.name}">${t.name}${t.is_auto ? " (自动)" : ""}</option>`).join("");
+      tagFilterEl.value = oldTag;
+      renderVideos(data.videos || []);
+      setStatus(`已加载 ${data.videos.length} 个视频`);
+    }
+
+    async function scanVideos() {
+      setStatus("正在扫描视频（仅索引元数据，不生成封面）...");
+      const r = await fetch("/api/scan", { method: "POST" });
+      const data = await r.json();
+      if (data.ok) {
+        setStatus(`扫描完成：新增 ${data.created}，更新 ${data.updated}，跳过 ${data.skipped}。需要封面请点击「刷新封面」`);
+        await queryVideos();
+      } else {
+        setStatus("扫描失败", true);
+      }
+    }
+
+    async function refreshCovers(onlyMissing) {
+      setStatus(onlyMissing ? "正在刷新封面（仅缺封面）..." : "正在重新生成全部封面，请稍候...");
+      const r = await fetch("/api/covers/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ only_missing: onlyMissing })
+      });
+      const data = await r.json();
+      if (!data.ok) {
+        setStatus("刷新封面失败", true);
+        return;
+      }
+      let msg = `封面处理完成：成功 ${data.success}，失败 ${data.failed}`;
+      if (data.sample_errors && data.sample_errors.length) {
+        msg += " | 示例: " + data.sample_errors.join("；");
+      }
+      setStatus(msg, data.failed > 0);
+      await queryVideos();
+    }
+
+    async function refreshOneCover(videoId) {
+      setStatus("正在刷新该视频封面...");
+      const r = await fetch(`/api/videos/${videoId}/cover/refresh`, { method: "POST" });
+      const data = await r.json();
+      if (data.ok) {
+        setStatus("该视频封面已刷新");
+        await queryVideos();
+      } else {
+        setStatus(data.error || "刷新失败", true);
+      }
+    }
+
+    async function autoGenerateTags() {
+      setStatus("正在根据文件名生成标签...");
+      const r = await fetch("/api/tags/auto-generate", { method: "POST" });
+      const data = await r.json();
+      if (data.ok) {
+        setStatus(`自动标签完成：生成 ${data.generated_tags}，关联 ${data.attached}`);
+        await queryVideos();
+      } else {
+        setStatus("自动标签失败", true);
+      }
+    }
+
+    async function addTag(videoId) {
+      const tag = prompt("输入要添加的标签");
+      if (!tag) return;
+      const r = await fetch(`/api/videos/${videoId}/tags`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tag: tag.trim() })
+      });
+      const data = await r.json();
+      if (data.ok) {
+        setStatus("标签添加成功");
+        await queryVideos();
+      } else {
+        setStatus(data.error || "标签添加失败", true);
+      }
+    }
+
+    async function uploadCover(videoId) {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/*";
+      input.onchange = async () => {
+        if (!input.files || !input.files[0]) return;
+        const fd = new FormData();
+        fd.append("file", input.files[0]);
+        const r = await fetch(`/api/videos/${videoId}/cover`, { method: "POST", body: fd });
+        const data = await r.json();
+        if (data.ok) {
+          setStatus("封面更新成功");
+          await queryVideos();
+        } else {
+          setStatus(data.error || "封面更新失败", true);
+        }
+      };
+      input.click();
+    }
+
+    async function playVideo(videoId) {
+      const v = currentVideos.find(x => x.id === videoId);
+      if (!v) return;
+      playerTitle.textContent = v.filename;
+      player.src = `/api/videos/${videoId}/stream`;
+      playerDialog.showModal();
+      await fetch(`/api/videos/${videoId}/play`, { method: "POST" });
+      await queryVideos();
+    }
+
+    async function aiSearchVideos() {
+      const question = document.getElementById("aiQuestionInput").value.trim();
+      const topK = Number(document.getElementById("aiTopKInput").value || 30);
+      if (!question) {
+        setStatus("请输入AI搜索问题", true);
+        return;
+      }
+      setStatus("正在调用模型检索...");
+      const r = await fetch("/api/ai/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question, top_k: topK })
+      });
+      const data = await r.json();
+      if (!data.ok) {
+        setStatus(data.error || "AI搜索失败", true);
+        return;
+      }
+      renderVideos(data.videos || []);
+      document.getElementById("aiReason").textContent = `来源: ${data.source} | ${data.reason || ""}`;
+      setStatus(`AI 搜索完成，返回 ${data.videos.length} 个结果`);
+    }
+
+    function exportAiData() {
+      window.open("/api/ai/export?format=jsonl", "_blank");
+    }
+
+    document.getElementById("saveConfigBtn").addEventListener("click", saveConfig);
+    document.getElementById("scanBtn").addEventListener("click", scanVideos);
+    document.getElementById("refreshCoversMissingBtn").addEventListener("click", () => refreshCovers(true));
+    document.getElementById("refreshCoversAllBtn").addEventListener("click", () => {
+      if (!confirm("确定要为所有视频重新生成默认封面吗？（耗时取决于视频数量）")) return;
+      refreshCovers(false);
+    });
+    document.getElementById("autoTagBtn").addEventListener("click", autoGenerateTags);
+    document.getElementById("exportAiDataBtn").addEventListener("click", exportAiData);
+    document.getElementById("queryBtn").addEventListener("click", queryVideos);
+    document.getElementById("aiSearchBtn").addEventListener("click", aiSearchVideos);
+    document.getElementById("searchInput").addEventListener("keydown", e => {
+      if (e.key === "Enter") queryVideos();
+    });
+    document.getElementById("aiQuestionInput").addEventListener("keydown", e => {
+      if (e.key === "Enter") aiSearchVideos();
+    });
+    document.getElementById("closePlayerBtn").addEventListener("click", () => {
+      player.pause();
+      player.src = "";
+      playerDialog.close();
+    });
+
+    gridEl.addEventListener("click", async (e) => {
+      const btn = e.target.closest("button");
+      if (!btn) return;
+      const id = Number(btn.dataset.id);
+      const act = btn.dataset.act;
+      if (act === "play") await playVideo(id);
+      if (act === "add-tag") await addTag(id);
+      if (act === "refresh-cover") await refreshOneCover(id);
+      if (act === "cover") await uploadCover(id);
+    });
+
+    (async function init() {
+      await loadConfig();
+      await queryVideos();
+    })();
+  </script>
+</body>
+</html>

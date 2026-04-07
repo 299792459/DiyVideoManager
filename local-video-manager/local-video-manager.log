@@ -1,0 +1,63 @@
+2026-04-07 15:03:43,236 [WARNING] werkzeug:  * Debugger is active!
+2026-04-07 15:08:17,518 [INFO] video_manager: 启动服务 host=127.0.0.1 port=5050 日志文件=C:\Users\JingChen\PycharmProjects\djangotutorial\local-video-manager\local-video-manager.log
+2026-04-07 15:08:17,933 [INFO] video_manager: 启动服务 host=127.0.0.1 port=5050 日志文件=C:\Users\JingChen\PycharmProjects\djangotutorial\local-video-manager\local-video-manager.log
+2026-04-07 15:08:20,685 [INFO] video_manager: 页面访问 GET /
+2026-04-07 15:08:20,903 [INFO] video_manager: 读取配置 GET /api/config
+2026-04-07 15:08:20,981 [INFO] video_manager: 列表查询 search='' tag='' sort=modified_at order=desc
+2026-04-07 15:08:23,283 [INFO] video_manager: 开始扫描视频 library_dirs=['C:\\Users\\JingChen\\Videos']
+2026-04-07 15:08:23,315 [INFO] video_manager: 扫描结束 created=0 updated=4 skipped=0（封面请单独点击刷新）
+2026-04-07 15:08:23,320 [INFO] video_manager: 列表查询 search='' tag='' sort=modified_at order=desc
+2026-04-07 15:08:26,730 [INFO] video_manager: 批量刷新封面开始 only_missing=True total=4
+2026-04-07 15:08:26,740 [WARNING] video_manager: 封面失败 id=1 filename=1987536605fb4220ac0522523d351caa.mp4 missing executable: ffmpeg
+2026-04-07 15:08:26,746 [WARNING] video_manager: 封面失败 id=2 filename=581b57c8657d412aa63d682bc7e5e20c.mp4 missing executable: ffmpeg
+2026-04-07 15:08:26,752 [WARNING] video_manager: 封面失败 id=3 filename=d8e2f541c96a4c408f9fc8e12fa835da.mp4 missing executable: ffmpeg
+2026-04-07 15:08:26,758 [WARNING] video_manager: 封面失败 id=4 filename=e3c9af16c64e40f28490f7bfed2dfd35.mp4 missing executable: ffmpeg
+2026-04-07 15:08:26,758 [INFO] video_manager: 批量刷新封面结束 success=0 failed=4
+2026-04-07 15:08:26,763 [INFO] video_manager: 列表查询 search='' tag='' sort=modified_at order=desc
+2026-04-07 15:08:33,249 [INFO] video_manager: 批量刷新封面开始 only_missing=False total=4
+2026-04-07 15:08:33,259 [WARNING] video_manager: 封面失败 id=1 filename=1987536605fb4220ac0522523d351caa.mp4 missing executable: ffmpeg
+2026-04-07 15:08:33,271 [WARNING] video_manager: 封面失败 id=2 filename=581b57c8657d412aa63d682bc7e5e20c.mp4 missing executable: ffmpeg
+2026-04-07 15:08:33,281 [WARNING] video_manager: 封面失败 id=3 filename=d8e2f541c96a4c408f9fc8e12fa835da.mp4 missing executable: ffmpeg
+2026-04-07 15:08:33,289 [WARNING] video_manager: 封面失败 id=4 filename=e3c9af16c64e40f28490f7bfed2dfd35.mp4 missing executable: ffmpeg
+2026-04-07 15:08:33,289 [INFO] video_manager: 批量刷新封面结束 success=0 failed=4
+2026-04-07 15:08:33,295 [INFO] video_manager: 列表查询 search='' tag='' sort=modified_at order=desc
+2026-04-07 15:09:40,029 [INFO] video_manager: 启动服务 host=127.0.0.1 port=5050 日志文件=C:\Users\JingChen\PycharmProjects\djangotutorial\local-video-manager\local-video-manager.log
+2026-04-07 15:09:47,983 [INFO] video_manager: 启动服务 host=127.0.0.1 port=5050 日志文件=C:\Users\JingChen\PycharmProjects\djangotutorial\local-video-manager\local-video-manager.log
+2026-04-07 15:10:01,655 [INFO] video_manager: 启动服务 host=127.0.0.1 port=5050 日志文件=C:\Users\JingChen\PycharmProjects\djangotutorial\local-video-manager\local-video-manager.log
+2026-04-07 15:10:07,127 [INFO] video_manager: 启动服务 host=127.0.0.1 port=5050 日志文件=C:\Users\JingChen\PycharmProjects\djangotutorial\local-video-manager\local-video-manager.log
+2026-04-07 15:10:08,623 [INFO] video_manager: 启动服务 host=127.0.0.1 port=5050 日志文件=C:\Users\JingChen\PycharmProjects\djangotutorial\local-video-manager\local-video-manager.log
+2026-04-07 15:10:11,161 [INFO] video_manager: 启动服务 host=127.0.0.1 port=5050 日志文件=C:\Users\JingChen\PycharmProjects\djangotutorial\local-video-manager\local-video-manager.log
+2026-04-07 15:10:12,607 [INFO] video_manager: 启动服务 host=127.0.0.1 port=5050 日志文件=C:\Users\JingChen\PycharmProjects\djangotutorial\local-video-manager\local-video-manager.log
+2026-04-07 15:10:21,191 [INFO] video_manager: 启动服务 host=127.0.0.1 port=5050 日志文件=C:\Users\JingChen\PycharmProjects\djangotutorial\local-video-manager\local-video-manager.log
+2026-04-07 15:10:21,195 [WARNING] video_manager: 未找到 ffmpeg: 未找到 ffmpeg。请安装并加入 PATH：在 PowerShell 执行 winget install --id Gyan.FFmpeg -e 或从 https://www.gyan.dev/ffmpeg/builds/ 下载解压，将 bin 目录加入系统「环境变量」PATH，然后重启本程序。也可设置环境变量 FFMPEG_PATH / FFPROBE_PATH 指向完整 exe 路径。
+2026-04-07 15:10:21,200 [WARNING] video_manager: 未找到 ffmpeg: 未找到 ffmpeg。请安装并加入 PATH：在 PowerShell 执行 winget install --id Gyan.FFmpeg -e 或从 https://www.gyan.dev/ffmpeg/builds/ 下载解压，将 bin 目录加入系统「环境变量」PATH，然后重启本程序。也可设置环境变量 FFMPEG_PATH / FFPROBE_PATH 指向完整 exe 路径。
+2026-04-07 15:10:21,200 [WARNING] video_manager: 未找到 ffprobe，时长探测可能为 0
+2026-04-07 15:10:21,200 [INFO] video_manager: 媒体工具: ffmpeg=None ffprobe=None
+2026-04-07 15:13:55,305 [INFO] video_manager: 启动服务 host=127.0.0.1 port=5050 日志文件=C:\Users\JingChen\PycharmProjects\djangotutorial\local-video-manager\local-video-manager.log
+2026-04-07 15:13:55,313 [INFO] video_manager: 已解析 ffmpeg: C:\Users\JingChen\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin\ffmpeg.exe
+2026-04-07 15:13:55,317 [INFO] video_manager: 已解析 ffprobe: C:\Users\JingChen\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin\ffprobe.exe
+2026-04-07 15:13:55,318 [INFO] video_manager: 媒体工具: ffmpeg='C:\\Users\\JingChen\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.1-full_build\\bin\\ffmpeg.exe' ffprobe='C:\\Users\\JingChen\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.1-full_build\\bin\\ffprobe.exe'
+2026-04-07 15:13:55,708 [INFO] video_manager: 启动服务 host=127.0.0.1 port=5050 日志文件=C:\Users\JingChen\PycharmProjects\djangotutorial\local-video-manager\local-video-manager.log
+2026-04-07 15:13:55,715 [INFO] video_manager: 已解析 ffmpeg: C:\Users\JingChen\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin\ffmpeg.exe
+2026-04-07 15:13:55,720 [INFO] video_manager: 已解析 ffprobe: C:\Users\JingChen\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin\ffprobe.exe
+2026-04-07 15:13:55,721 [INFO] video_manager: 媒体工具: ffmpeg='C:\\Users\\JingChen\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.1-full_build\\bin\\ffmpeg.exe' ffprobe='C:\\Users\\JingChen\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.1-full_build\\bin\\ffprobe.exe'
+2026-04-07 15:13:57,422 [INFO] video_manager: 启动服务 host=127.0.0.1 port=5050 日志文件=C:\Users\JingChen\PycharmProjects\djangotutorial\local-video-manager\local-video-manager.log
+2026-04-07 15:13:57,431 [INFO] video_manager: 已解析 ffmpeg: C:\Users\JingChen\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin\ffmpeg.exe
+2026-04-07 15:13:57,435 [INFO] video_manager: 已解析 ffprobe: C:\Users\JingChen\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin\ffprobe.exe
+2026-04-07 15:13:57,436 [INFO] video_manager: 媒体工具: ffmpeg='C:\\Users\\JingChen\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.1-full_build\\bin\\ffmpeg.exe' ffprobe='C:\\Users\\JingChen\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.1-full_build\\bin\\ffprobe.exe'
+2026-04-07 15:13:57,940 [INFO] video_manager: 启动服务 host=127.0.0.1 port=5050 日志文件=C:\Users\JingChen\PycharmProjects\djangotutorial\local-video-manager\local-video-manager.log
+2026-04-07 15:13:57,949 [INFO] video_manager: 已解析 ffmpeg: C:\Users\JingChen\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin\ffmpeg.exe
+2026-04-07 15:13:57,954 [INFO] video_manager: 已解析 ffprobe: C:\Users\JingChen\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin\ffprobe.exe
+2026-04-07 15:13:57,954 [INFO] video_manager: 媒体工具: ffmpeg='C:\\Users\\JingChen\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.1-full_build\\bin\\ffmpeg.exe' ffprobe='C:\\Users\\JingChen\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.1-full_build\\bin\\ffprobe.exe'
+2026-04-07 15:14:01,628 [INFO] video_manager: 页面访问 GET /
+2026-04-07 15:14:01,834 [INFO] video_manager: 读取配置 GET /api/config
+2026-04-07 15:14:01,924 [INFO] video_manager: 列表查询 search='' tag='' sort=modified_at order=desc
+2026-04-07 15:14:07,332 [INFO] video_manager: 批量刷新封面开始 only_missing=True total=4
+2026-04-07 15:14:07,411 [INFO] video_manager: 批量刷新封面开始 only_missing=True total=4
+2026-04-07 15:14:12,493 [INFO] video_manager: 批量刷新封面结束 success=4 failed=0
+2026-04-07 15:14:12,501 [INFO] video_manager: 列表查询 search='' tag='' sort=modified_at order=desc
+2026-04-07 15:14:13,801 [INFO] video_manager: 批量刷新封面结束 success=4 failed=0
+2026-04-07 15:14:13,807 [INFO] video_manager: 列表查询 search='' tag='' sort=modified_at order=desc
+2026-04-07 15:14:26,312 [INFO] video_manager: 开始根据文件名自动生成标签
+2026-04-07 15:14:26,315 [INFO] video_manager: 自动标签完成 generated=0 attached=0
+2026-04-07 15:14:26,320 [INFO] video_manager: 列表查询 search='' tag='' sort=modified_at order=desc
