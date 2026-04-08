@@ -874,25 +874,38 @@ def list_video_rows(
     sql = f"""
         SELECT
             v.*,
-            GROUP_CONCAT(t.name, '|') AS tag_names,
-            GROUP_CONCAT(t.id ORDER BY t.name, '|') AS tag_ids
+            (
+                SELECT json_group_array(json_object('id', id, 'name', name))
+                FROM (
+                    SELECT t.id, t.name
+                    FROM video_tags vt
+                    JOIN tags t ON t.id = vt.tag_id
+                    WHERE vt.video_id = v.id
+                    ORDER BY t.name
+                ) z
+            ) AS tag_items_json
         FROM videos v
-        LEFT JOIN video_tags vt ON vt.video_id = v.id
-        LEFT JOIN tags t ON t.id = vt.tag_id
         {where_clause}
-        GROUP BY v.id
     """
     return conn.execute(sql, params).fetchall()
 
 
 def serialize_video_row(row: sqlite3.Row) -> Dict:
-    tag_names_raw = row["tag_names"]
-    tags = tag_names_raw.split("|") if tag_names_raw else []
     keys = row.keys()
-    tag_ids_raw = row["tag_ids"] if "tag_ids" in keys else None
-    ids = [int(x) for x in tag_ids_raw.split("|")] if tag_ids_raw else []
-    n = min(len(ids), len(tags))
-    tag_items = [{"id": ids[i], "name": tags[i]} for i in range(n)]
+    raw = row["tag_items_json"] if "tag_items_json" in keys else None
+    tag_items: List[Dict] = []
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                tag_items = [
+                    {"id": int(x["id"]), "name": str(x["name"])}
+                    for x in parsed
+                    if isinstance(x, dict) and "id" in x and "name" in x
+                ]
+        except (json.JSONDecodeError, TypeError, KeyError, ValueError):
+            tag_items = []
+    tags = [ti["name"] for ti in tag_items]
     recycled_at = row["recycled_at"] if "recycled_at" in keys else None
     return {
         "id": row["id"],
