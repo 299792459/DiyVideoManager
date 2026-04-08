@@ -77,6 +77,8 @@
           <label class="compact-inline shrink-0" for="cardSizeRange">卡片宽</label>
           <input type="range" id="cardSizeRange" min="160" max="480" step="4" value="280" title="拖动调整卡片宽度" />
           <span id="cardSizeLabel" class="size-label">280px</span>
+          <span class="compact-divider" aria-hidden="true"></span>
+          <label class="compact-inline" title="勾选后列表仅显示回收站中的条目（数据库标记，非标签）"><input type="checkbox" id="showRecycleCheck" /> 显示回收站</label>
         </div>
       </div>
     </section>
@@ -110,6 +112,35 @@
     </section>
 
     <section class="panel">
+      <h2>外部播放器</h2>
+      <div class="row">
+        <label>可执行文件路径</label>
+        <input id="externalPlayerPath" type="text" placeholder="例如 C:\Program Files\mpv\mpv.exe 或 vlc.exe 完整路径" />
+      </div>
+      <p class="muted small">留空则仅使用页面内「播放」。填写并保存后，视频卡片会出现「外部播放」。</p>
+    </section>
+
+    <section class="panel">
+      <h2>回收站</h2>
+      <p class="muted small">卡片「删除」仅将记录移入回收站（<code>recycled_at</code> 字段），不占用标签。此处可永久删除磁盘文件与库记录。</p>
+      <div class="actions">
+        <button type="button" id="purgeRecycleBtn">清空回收站（删除文件）</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>标签批量整理（外部大模型）</h2>
+      <p class="muted small">导出紧凑 JSONL（含视频 ID、文件名、路径与标签），交给大模型重写 <code>t</code> 后再导入。详细约定见仓库内 <code>docs/TAGS_LLM_README.md</code>。</p>
+      <div class="actions">
+        <button type="button" id="exportTagsBtn">导出标签(JSONL)</button>
+        <button type="button" id="exportTagsReadmeBtn">下载格式说明</button>
+        <input type="file" id="tagsImportFile" accept=".jsonl,.txt,text/plain,application/json" style="display:none" />
+        <button type="button" id="tagsImportPickBtn">选择文件并导入…</button>
+        <label class="compact-inline" title="若某行含 p 且与库内路径不一致则跳过该行"><input type="checkbox" id="tagsImportStrictPath" /> 严格校验路径</label>
+      </div>
+    </section>
+
+    <section class="panel">
       <h2>AI 模型（OpenAI 兼容）</h2>
       <div class="row">
         <label>Base URL</label>
@@ -131,6 +162,31 @@
         <label>启用模型检索</label>
         <input id="llmEnabled" type="checkbox" />
       </div>
+    </section>
+
+    <section class="panel">
+      <h2>标签语义（本地向量）</h2>
+      <p class="muted small">使用 <strong>fastembed</strong>（ONNX，CPU）对<strong>全库标签名</strong>建向量；仅在视频页「关键词」搜索时，将查询与标签的余弦相似度与原字符意图<strong>加权融合</strong>。不替代标签下拉精确筛选。首次使用会下载模型（约百余 MB）。</p>
+      <div class="row">
+        <label>启用</label>
+        <input id="intentEnabled" type="checkbox" />
+      </div>
+      <div class="row">
+        <label>模型标识</label>
+        <input id="intentModel" type="text" placeholder="BAAI/bge-small-zh-v1.5" />
+      </div>
+      <div class="row">
+        <label>字符权重</label>
+        <input id="intentLexicalBlend" type="number" min="0" max="1" step="0.05" value="0.42" title="越大越接近原关键词匹配（0～1）" />
+      </div>
+      <div class="row">
+        <label>语义最低分</label>
+        <input id="intentMinSem" type="number" min="0" max="1" step="0.02" value="0.18" title="标签与查询的余弦下限；可调命中率" />
+      </div>
+      <div class="actions">
+        <button type="button" id="intentProbeBtn">检测模型（可能下载）</button>
+      </div>
+      <p id="intentStatusLine" class="muted small"></p>
     </section>
 
     <section class="panel">
@@ -188,6 +244,8 @@
 
     const LS_CARD = "vm_grid_card_min";
     const LS_PER_PAGE = "vm_per_page";
+    const LS_SHOW_RECYCLE = "vm_show_recycle";
+    let externalPlayerConfigured = false;
 
     function setVideoStatus(text, isErr = false) {
       videoStatusEl.textContent = text;
@@ -290,6 +348,14 @@
       return new Date(ts * 1000).toLocaleString();
     }
 
+    function escHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
     async function loadConfig() {
       const r = await fetch("/api/config");
       const data = await r.json();
@@ -304,6 +370,16 @@
       const st = data.stats || {};
       document.getElementById("statsSamplingEnabled").checked = !!st.performance_sampling_enabled;
       document.getElementById("statsSampleSize").value = Number(st.sample_size || 30);
+      const pl = data.player || {};
+      document.getElementById("externalPlayerPath").value = pl.external_path || "";
+      externalPlayerConfigured = !!(pl.external_path && String(pl.external_path).trim());
+      const intent = data.intent || {};
+      document.getElementById("intentEnabled").checked = !!intent.enabled;
+      document.getElementById("intentModel").value = intent.model || "BAAI/bge-small-zh-v1.5";
+      document.getElementById("intentLexicalBlend").value =
+        intent.lexical_blend != null ? intent.lexical_blend : 0.42;
+      document.getElementById("intentMinSem").value =
+        intent.min_semantic != null ? intent.min_semantic : 0.18;
     }
 
     async function saveConfig() {
@@ -323,10 +399,21 @@
         performance_sampling_enabled: document.getElementById("statsSamplingEnabled").checked,
         sample_size: Number(document.getElementById("statsSampleSize").value || 30)
       };
+      const player = {
+        external_path: document.getElementById("externalPlayerPath").value.trim()
+      };
+      externalPlayerConfigured = !!player.external_path;
+      const intent = {
+        enabled: document.getElementById("intentEnabled").checked,
+        model: document.getElementById("intentModel").value.trim(),
+        lexical_blend: Number(document.getElementById("intentLexicalBlend").value || 0.42),
+        min_semantic: Number(document.getElementById("intentMinSem").value || 0.18),
+        query_prefix: ""
+      };
       const r = await fetch("/api/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ data_dir: dataDir, library_dirs: libraryDirs, llm, stats })
+        body: JSON.stringify({ data_dir: dataDir, library_dirs: libraryDirs, llm, stats, player, intent })
       });
       const data = await r.json();
       if (data.ok) setSettingsStatus("配置已保存");
@@ -338,7 +425,8 @@
       const disk = data.disk || {};
       document.getElementById("statsSummaryBox").innerHTML = `
         <dl class="stats-dl">
-          <dt>视频条数</dt><dd>${db.video_count ?? 0}</dd>
+          <dt>视频条数（正常）</dt><dd>${db.video_count ?? 0}</dd>
+          <dt>回收站条数</dt><dd>${db.recycled_count ?? 0}</dd>
           <dt>标签数</dt><dd>${db.tag_count ?? 0}</dd>
           <dt>标签关联数</dt><dd>${db.video_tag_links ?? 0}</dd>
           <dt>总占用（索引）</dt><dd>${fmtSize(db.total_bytes)}</dd>
@@ -395,20 +483,32 @@
     function renderVideos(videos) {
       currentVideos = videos;
       gridEl.innerHTML = "";
+      const inRecycle = document.getElementById("showRecycleCheck").checked;
       if (!videos.length) {
-        gridEl.innerHTML = "<div class='empty'>暂无视频，请先在设置中扫描目录。</div>";
+        gridEl.innerHTML = inRecycle
+          ? "<div class='empty'>回收站为空</div>"
+          : "<div class='empty'>暂无视频，请先在设置中扫描目录。</div>";
         return;
       }
       videos.forEach(v => {
         const card = document.createElement("article");
-        card.className = "card";
-        const tags = (v.tags || []).map(t => `<span class="tag">${t}</span>`).join("");
+        card.className = "card" + (v.recycled ? " card-recycled" : "");
+        const tags = (v.tags || []).map(t => {
+          const enc = encodeURIComponent(t);
+          return `<button type="button" class="tag tag-filter" data-filter-tag="${enc}" title="点击按此标签筛选">${escHtml(t)}</button>`;
+        }).join("");
+        const extPlay = externalPlayerConfigured
+          ? `<button type="button" data-act="external-play" data-id="${v.id}">外部播放</button>`
+          : "";
+        const delOrRestore = v.recycled
+          ? `<button type="button" data-act="restore" data-id="${v.id}">恢复</button>`
+          : `<button type="button" data-act="recycle" data-id="${v.id}">删除</button>`;
         card.innerHTML = `
           <div class="cover">
             ${v.cover_url ? `<img src="${v.cover_url}" alt="${v.filename}" />` : "<div class='no-cover'>无封面</div>"}
           </div>
           <div class="content">
-            <h3 title="${v.filename}">${v.filename}</h3>
+            <h3 title="${v.filename}">${v.recycled ? "<span class='muted'>[回收站]</span> " : ""}${v.filename}</h3>
             <p class="meta">
               观看: <b>${v.watch_count}</b> 次 |
               时长: <b>${fmtDuration(v.duration_sec)}</b> |
@@ -417,10 +517,13 @@
             <p class="meta">修改时间: ${fmtTime(v.modified_at)}</p>
             <div class="tags">${tags || "<span class='muted'>暂无标签</span>"}</div>
             <div class="actions">
-              <button data-act="play" data-id="${v.id}">播放</button>
-              <button data-act="add-tag" data-id="${v.id}">加标签</button>
-              <button data-act="refresh-cover" data-id="${v.id}">刷新封面</button>
-              <button data-act="cover" data-id="${v.id}">换封面</button>
+              <button type="button" data-act="play" data-id="${v.id}">播放</button>
+              ${extPlay}
+              <button type="button" data-act="reveal" data-id="${v.id}">打开位置</button>
+              <button type="button" data-act="add-tag" data-id="${v.id}">加标签</button>
+              <button type="button" data-act="refresh-cover" data-id="${v.id}">刷新封面</button>
+              <button type="button" data-act="cover" data-id="${v.id}">换封面</button>
+              ${delOrRestore}
             </div>
           </div>
         `;
@@ -436,13 +539,15 @@
       const sort = document.getElementById("sortSelect").value;
       const order = document.getElementById("orderSelect").value;
       const perPage = Number(document.getElementById("perPageSelect").value);
+      const showR = document.getElementById("showRecycleCheck").checked;
       const params = new URLSearchParams({
         search: q,
         tag,
         sort,
         order,
         page: String(currentPage),
-        per_page: String(perPage)
+        per_page: String(perPage),
+        recycled: showR ? "1" : "0"
       });
       const r = await fetch(`/api/videos?${params.toString()}`);
       const data = await r.json();
@@ -453,7 +558,8 @@
       renderVideos(data.videos || []);
       updatePaginationUI(data);
       const total = data.total != null ? data.total : (data.videos || []).length;
-      setVideoStatus(`已加载 第 ${currentPage} 页，本页 ${(data.videos || []).length} 条，合计 ${total} 条`);
+      const rb = data.recycled_view ? "（回收站）" : "";
+      setVideoStatus(`已加载 第 ${currentPage} 页，本页 ${(data.videos || []).length} 条，合计 ${total} 条${rb}`);
     }
 
     async function scanVideos() {
@@ -461,7 +567,11 @@
       const r = await fetch("/api/scan", { method: "POST" });
       const data = await r.json();
       if (data.ok) {
-        setSettingsStatus(`扫描完成：新增 ${data.created}，更新 ${data.updated}，跳过 ${data.skipped}`);
+        let msg = `扫描完成：新增 ${data.created}，更新 ${data.updated}，跳过 ${data.skipped}`;
+        if (data.moved_invalid_to_recycle) {
+          msg += `，无效路径已入回收站 ${data.moved_invalid_to_recycle}`;
+        }
+        setSettingsStatus(msg);
         if (!viewSettings.classList.contains("hidden")) loadStatsSummary();
         listMode = "browse";
         await queryVideos(1);
@@ -563,6 +673,56 @@
       input.click();
     }
 
+    async function recycleVideo(videoId) {
+      const r = await fetch(`/api/videos/${videoId}/recycle`, { method: "POST" });
+      const data = await r.json();
+      if (data.ok) {
+        await queryVideos(currentPage);
+        setVideoStatus("已移入回收站（文件仍在磁盘）");
+      } else setVideoStatus(data.error || "操作失败", true);
+    }
+
+    async function restoreVideo(videoId) {
+      const r = await fetch(`/api/videos/${videoId}/restore`, { method: "POST" });
+      const data = await r.json();
+      if (data.ok) {
+        await queryVideos(currentPage);
+        setVideoStatus("已从回收站恢复");
+      } else setVideoStatus(data.error || "操作失败", true);
+    }
+
+    async function openExternalPlay(videoId) {
+      setVideoStatus("正在启动外部播放器…");
+      const r = await fetch(`/api/videos/${videoId}/open-external`, { method: "POST" });
+      const data = await r.json();
+      if (data.ok) setVideoStatus("已请求外部播放器打开");
+      else setVideoStatus(data.error || "外部播放失败", true);
+    }
+
+    async function revealVideoPath(videoId) {
+      const r = await fetch(`/api/videos/${videoId}/reveal`, { method: "POST" });
+      const data = await r.json();
+      if (data.ok) setVideoStatus("已在资源管理器中定位");
+      else setVideoStatus(data.error || "无法打开位置（文件可能已不存在）", true);
+    }
+
+    async function purgeRecycleBin() {
+      if (!confirm("将永久删除回收站中条目对应的磁盘视频文件及封面文件，并清除数据库记录。不可恢复。确定？")) return;
+      setSettingsStatus("正在清空回收站…");
+      const r = await fetch("/api/recycle/purge", { method: "POST" });
+      const data = await r.json();
+      if (!data.ok) {
+        setSettingsStatus("清空失败", true);
+        return;
+      }
+      let m = `已删除磁盘文件 ${data.files_deleted} 个，库记录 ${data.rows_removed} 条`;
+      if (data.errors && data.errors.length) m += `；警告 ${data.errors.length} 条`;
+      setSettingsStatus(m, !!(data.errors && data.errors.length));
+      if (!viewSettings.classList.contains("hidden")) loadStatsSummary();
+      showView("videos");
+      await queryVideos(1);
+    }
+
     async function playVideo(videoId) {
       const v = currentVideos.find(x => x.id === videoId);
       if (!v) return;
@@ -608,6 +768,125 @@
       window.open("/api/ai/export?format=jsonl", "_blank");
     }
 
+    function exportTagsJsonl() {
+      window.open("/api/tags/export", "_blank");
+    }
+
+    function exportTagsReadme() {
+      window.open("/api/tags/export-readme", "_blank");
+    }
+
+    async function importTagsFromFile(file) {
+      const strict = document.getElementById("tagsImportStrictPath").checked ? "1" : "0";
+      const fdPrev = new FormData();
+      fdPrev.append("file", file);
+      setSettingsStatus("正在分析导入文件…");
+      const pr = await fetch("/api/tags/import-preview?strict_path=" + encodeURIComponent(strict), {
+        method: "POST",
+        body: fdPrev
+      });
+      let prev;
+      try {
+        prev = await pr.json();
+      } catch (e) {
+        setSettingsStatus("预览失败：响应不是 JSON", true);
+        return;
+      }
+      if (!prev.ok) {
+        setSettingsStatus(prev.error || "预览失败", true);
+        return;
+      }
+      let summary = `非空行 ${prev.lines_nonempty}，将写入 ${prev.would_apply} 条视频`;
+      if (prev.would_change != null) summary += `（其中约 ${prev.would_change} 条标签与当前不同）`;
+      summary += `；跳过：无此ID ${prev.skipped_no_video}，路径不一致 ${prev.skipped_path}，缺字段t ${prev.skipped_no_t}`;
+      if (prev.errors && prev.errors.length) summary += `；JSON解析错误 ${prev.errors.length} 行`;
+      if (prev.samples && prev.samples.length) {
+        summary += "\n\n示例（最多15条中的前6条）：\n";
+        prev.samples.slice(0, 6).forEach(s => {
+          summary += `  #${s.i} ${s.n}\n    当前 ${JSON.stringify(s.old)} → 新 ${JSON.stringify(s.new)}\n`;
+        });
+      }
+      if (!window.confirm("确认按以下内容导入标签？\n\n" + summary)) {
+        setSettingsStatus("已取消导入");
+        return;
+      }
+
+      const fd = new FormData();
+      fd.append("file", file);
+      setSettingsStatus("正在导入标签…");
+      const r = await fetch("/api/tags/import?strict_path=" + encodeURIComponent(strict), {
+        method: "POST",
+        body: fd
+      });
+      let data;
+      try {
+        data = await r.json();
+      } catch (e) {
+        setSettingsStatus("导入失败：响应不是 JSON", true);
+        return;
+      }
+      if (!data.ok) {
+        setSettingsStatus(data.error || "导入失败", true);
+        return;
+      }
+      const parts = [
+        `已更新 ${data.updated}`,
+        data.skipped_no_video ? `无此 ID ${data.skipped_no_video}` : "",
+        data.skipped_path ? `路径跳过 ${data.skipped_path}` : "",
+        data.skipped_no_t ? `缺 t 跳过 ${data.skipped_no_t}` : ""
+      ].filter(Boolean);
+      let msg = parts.join("，");
+      if (data.errors && data.errors.length) {
+        msg += " | 错误行 " + data.errors.length + "（见控制台）";
+        console.warn("tags import errors", data.errors);
+      }
+      setSettingsStatus(msg, !!(data.errors && data.errors.length));
+      listMode = "browse";
+      await queryVideos(1);
+    }
+
+    document.getElementById("purgeRecycleBtn").addEventListener("click", purgeRecycleBin);
+
+    document.getElementById("showRecycleCheck").addEventListener("change", () => {
+      try {
+        localStorage.setItem(LS_SHOW_RECYCLE, document.getElementById("showRecycleCheck").checked ? "1" : "0");
+      } catch (e) {}
+      currentPage = 1;
+      queryVideos(1);
+    });
+
+    document.getElementById("exportTagsBtn").addEventListener("click", exportTagsJsonl);
+    document.getElementById("exportTagsReadmeBtn").addEventListener("click", exportTagsReadme);
+    document.getElementById("tagsImportPickBtn").addEventListener("click", () => {
+      document.getElementById("tagsImportFile").click();
+    });
+    document.getElementById("tagsImportFile").addEventListener("change", (e) => {
+      const f = e.target.files && e.target.files[0];
+      e.target.value = "";
+      if (f) importTagsFromFile(f);
+    });
+
+    async function probeIntentModel() {
+      const el = document.getElementById("intentStatusLine");
+      el.textContent = "正在检测（首次会下载模型，请稍候）…";
+      try {
+        const r = await fetch("/api/intent/status?probe=1");
+        const d = await r.json();
+        if (!d.fastembed_installed) {
+          el.textContent = "未安装 fastembed：请在环境中执行 pip install fastembed";
+          return;
+        }
+        if (d.probe && d.probe.ok) {
+          el.textContent = `模型可加载，向量维度 ${d.probe.dim}（模型：${d.model || ""}）`;
+        } else {
+          el.textContent = (d.probe && d.probe.error) || "加载失败";
+        }
+      } catch (e) {
+        el.textContent = "请求失败: " + e;
+      }
+    }
+
+    document.getElementById("intentProbeBtn").addEventListener("click", probeIntentModel);
     document.getElementById("saveConfigBtn").addEventListener("click", saveConfig);
     document.getElementById("scanBtn").addEventListener("click", scanVideos);
     document.getElementById("refreshCoversMissingBtn").addEventListener("click", () => refreshCovers(true));
@@ -677,11 +956,34 @@
     });
 
     gridEl.addEventListener("click", async (e) => {
+      const tagBtn = e.target.closest("button.tag-filter");
+      if (tagBtn && gridEl.contains(tagBtn)) {
+        const raw = tagBtn.getAttribute("data-filter-tag");
+        if (raw) {
+          try {
+            const tagName = decodeURIComponent(raw);
+            tagFilterEl.value = tagName;
+            currentPage = 1;
+            await queryVideos(1);
+            setVideoStatus(`已按标签筛选：${tagName}`);
+          } catch (err) {
+            setVideoStatus("标签解析失败", true);
+          }
+        }
+        return;
+      }
       const btn = e.target.closest("button");
       if (!btn) return;
       const id = Number(btn.dataset.id);
       const act = btn.dataset.act;
       if (act === "play") await playVideo(id);
+      if (act === "external-play") await openExternalPlay(id);
+      if (act === "reveal") await revealVideoPath(id);
+      if (act === "recycle") {
+        if (!confirm("将本条移入回收站？磁盘上的视频文件不会删除。")) return;
+        await recycleVideo(id);
+      }
+      if (act === "restore") await restoreVideo(id);
       if (act === "add-tag") await addTag(id);
       if (act === "refresh-cover") await refreshOneCover(id);
       if (act === "cover") await uploadCover(id);
@@ -691,6 +993,10 @@
       try {
         const pp = localStorage.getItem(LS_PER_PAGE);
         if (pp) document.getElementById("perPageSelect").value = pp;
+      } catch (e) {}
+      try {
+        const sr = localStorage.getItem(LS_SHOW_RECYCLE);
+        if (sr === "1") document.getElementById("showRecycleCheck").checked = true;
       } catch (e) {}
       try {
         const c = localStorage.getItem(LS_CARD);

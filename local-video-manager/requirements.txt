@@ -1,2 +1,4 @@
 Flask
 psutil>=5.9
+# 本地标签语义检索（可选，约百余 MB 模型首次下载）
+fastembed>=0.4.0

@@ -15,7 +15,28 @@ from typing import Dict, List, Optional, Tuple
 from urllib import error as url_error
 from urllib import request as url_request
 
-from flask import Flask, jsonify, render_template, request, send_file
+from flask import Flask, Response, jsonify, render_template, request, send_file
+
+try:
+    from intent_local import (
+        apply_intent_hybrid_search,
+        clear_tag_vector_cache,
+        is_fastembed_available,
+        probe_intent_model,
+    )
+except ImportError:
+
+    def is_fastembed_available() -> bool:
+        return False
+
+    def apply_intent_hybrid_search(*args, **kwargs):  # type: ignore[no-untyped-def]
+        return []
+
+    def clear_tag_vector_cache() -> None:
+        pass
+
+    def probe_intent_model(model_name: str) -> Dict:
+        return {"ok": False, "error": "intent_local 模块不可用"}
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -167,6 +188,16 @@ def _default_config() -> Dict:
             "performance_sampling_enabled": False,
             "sample_size": 30,
         },
+        "player": {
+            "external_path": "",
+        },
+        "intent": {
+            "enabled": False,
+            "model": "BAAI/bge-small-zh-v1.5",
+            "lexical_blend": 0.42,
+            "min_semantic": 0.18,
+            "query_prefix": "",
+        },
     }
 
 
@@ -190,6 +221,14 @@ def load_config() -> Dict:
     for k, v in defaults["stats"].items():
         st.setdefault(k, v)
     cfg["stats"] = st
+    pl = cfg.get("player") or {}
+    for k, v in defaults["player"].items():
+        pl.setdefault(k, v)
+    cfg["player"] = pl
+    intent = cfg.get("intent") or {}
+    for k, v in defaults["intent"].items():
+        intent.setdefault(k, v)
+    cfg["intent"] = intent
     return cfg
 
 
@@ -254,6 +293,52 @@ def init_db(conn: sqlite3.Connection) -> None:
         """
     )
     conn.commit()
+    migrate_db(conn)
+
+
+def migrate_db(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(videos)").fetchall()}
+    if "recycled_at" not in cols:
+        conn.execute("ALTER TABLE videos ADD COLUMN recycled_at INTEGER")
+        LOG.info("数据库迁移: 已添加列 videos.recycled_at")
+        conn.commit()
+
+
+def reveal_path_in_os(file_path: str) -> Tuple[bool, str]:
+    """在系统文件管理器中定位到文件（若存在）。"""
+    p = Path(file_path)
+    if not p.exists():
+        return False, "路径不存在"
+    try:
+        if sys.platform == "win32":
+            subprocess.run(["explorer", f"/select,{p.resolve()}"], check=False)
+        elif sys.platform == "darwin":
+            subprocess.run(["open", "-R", str(p.resolve())], check=False)
+        else:
+            subprocess.run(["xdg-open", str(p.parent)], check=False)
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
+def launch_external_player(exe: str, video_path: Path) -> Tuple[bool, str]:
+    if not video_path.is_file():
+        return False, "视频文件不存在"
+    exe_p = Path(exe)
+    if not exe_p.is_file():
+        return False, "外部播放器路径无效或文件不存在"
+    try:
+        args = [str(exe_p.resolve()), str(video_path.resolve())]
+        if sys.platform == "win32":
+            cf = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(
+                subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+            )
+            subprocess.Popen(args, close_fds=True, creationflags=cf)
+        else:
+            subprocess.Popen(args, close_fds=True, start_new_session=True)
+        return True, ""
+    except Exception as e:
+        return False, str(e)
 
 
 def run_cmd(args: List[str]) -> Tuple[int, str, str]:
@@ -369,6 +454,169 @@ def make_search_text(filename: str, tags: List[str]) -> str:
     return f"{filename.lower()} {' '.join(t.lower() for t in tags)}"
 
 
+def _read_tags_llm_readme() -> str:
+    p = APP_DIR / "docs" / "TAGS_LLM_README.md"
+    if p.is_file():
+        return p.read_text(encoding="utf-8")
+    return "# 未找到 docs/TAGS_LLM_README.md\n"
+
+
+def _normalize_import_tag_list(raw) -> List[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    out: List[str] = []
+    for x in raw:
+        s = str(x).strip()
+        if not s or len(s) > 200:
+            continue
+        if s not in out:
+            out.append(s)
+    return out
+
+
+def _tags_list_equal(a: List[str], b: List[str]) -> bool:
+    return sorted(a) == sorted(b)
+
+
+def _video_tag_names(conn: sqlite3.Connection, video_id: int) -> List[str]:
+    rows = conn.execute(
+        """
+        SELECT t.name
+        FROM video_tags vt
+        JOIN tags t ON t.id = vt.tag_id
+        WHERE vt.video_id = ?
+        ORDER BY t.name
+        """,
+        (video_id,),
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
+def _read_tags_import_request_body() -> Tuple[Optional[str], bytes]:
+    raw_bytes: Optional[bytes] = None
+    if request.files and request.files.get("file"):
+        raw_bytes = request.files["file"].read()
+    elif request.data:
+        raw_bytes = request.data
+    if not raw_bytes:
+        return "empty body: use multipart file or raw JSONL", b""
+    return None, raw_bytes
+
+
+def _decode_tags_import_text(raw_bytes: bytes) -> Tuple[Optional[str], str]:
+    try:
+        return None, raw_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return "decode error: need UTF-8", ""
+
+
+def _preview_tags_import(text: str, strict_path: bool) -> Dict:
+    """解析 JSONL，统计将应用的行与示例，不写库。"""
+    lines_nonempty = 0
+    would_apply = 0
+    skipped_no_video = 0
+    skipped_path = 0
+    skipped_no_t = 0
+    unchanged = 0
+    errors: List[Dict] = []
+    samples: List[Dict] = []
+
+    conn = get_conn()
+    try:
+        for line_no, line in enumerate(text.splitlines(), 1):
+            line = line.strip()
+            if not line:
+                continue
+            lines_nonempty += 1
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError as e:
+                errors.append({"line": line_no, "error": f"json: {e}"})
+                continue
+            if not isinstance(obj, dict):
+                errors.append({"line": line_no, "error": "line is not a JSON object"})
+                continue
+            if "i" not in obj:
+                errors.append({"line": line_no, "error": "missing i"})
+                continue
+            try:
+                vid = int(obj["i"])
+            except (TypeError, ValueError):
+                errors.append({"line": line_no, "error": "invalid i"})
+                continue
+            if "t" not in obj:
+                skipped_no_t += 1
+                continue
+            row = conn.execute(
+                "SELECT id, path, filename FROM videos WHERE id = ?", (vid,)
+            ).fetchone()
+            if not row:
+                skipped_no_video += 1
+                continue
+            if strict_path and "p" in obj and obj["p"] is not None:
+                p_in = str(obj["p"])
+                if p_in and p_in != row["path"]:
+                    skipped_path += 1
+                    continue
+            new_tags = _normalize_import_tag_list(obj.get("t"))
+            old_tags = _video_tag_names(conn, vid)
+            if _tags_list_equal(old_tags, new_tags):
+                unchanged += 1
+            would_apply += 1
+            if len(samples) < 15:
+                samples.append(
+                    {
+                        "i": vid,
+                        "n": row["filename"],
+                        "old": old_tags,
+                        "new": new_tags,
+                    }
+                )
+    finally:
+        conn.close()
+
+    return {
+        "ok": True,
+        "lines_nonempty": lines_nonempty,
+        "would_apply": would_apply,
+        "unchanged": unchanged,
+        "would_change": max(0, would_apply - unchanged),
+        "skipped_no_video": skipped_no_video,
+        "skipped_path": skipped_path,
+        "skipped_no_t": skipped_no_t,
+        "errors": errors,
+        "samples": samples,
+    }
+
+
+def _set_video_tags_replace(conn: sqlite3.Connection, video_id: int, tag_names: List[str]) -> None:
+    """清空该视频原有关联后，写入新标签列表（source=import），并更新 search_text。"""
+    now = int(time.time())
+    conn.execute("DELETE FROM video_tags WHERE video_id = ?", (video_id,))
+    row = conn.execute("SELECT filename FROM videos WHERE id = ?", (video_id,)).fetchone()
+    if not row:
+        raise ValueError("video not found")
+    filename = row["filename"]
+    for name in tag_names:
+        conn.execute(
+            "INSERT INTO tags(name, is_auto, created_at) VALUES(?, 0, ?) ON CONFLICT(name) DO NOTHING",
+            (name, now),
+        )
+        tr = conn.execute("SELECT id FROM tags WHERE name = ?", (name,)).fetchone()
+        conn.execute(
+            "INSERT INTO video_tags(video_id, tag_id, source, created_at) VALUES(?,?, 'import', ?)",
+            (video_id, tr["id"], now),
+        )
+    conn.execute(
+        "UPDATE videos SET search_text = ? WHERE id = ?",
+        (make_search_text(filename, tag_names), video_id),
+    )
+
+
 def extract_filename_tokens(filename: str) -> List[str]:
     base = Path(filename).stem.lower()
     ascii_tokens = re.findall(r"[a-z0-9]{2,}", base)
@@ -413,6 +661,26 @@ def calc_intent_score(text: str, terms: List[str]) -> float:
             if overlap:
                 score += overlap / max(len(t), 1)
     return score
+
+
+def filter_videos_lexical_search(
+    videos: List[Dict], search: str, *, include_path: bool = False
+) -> List[Dict]:
+    """本地关键词意图：与 GET /api/videos 一致（默认不含路径）；AI 回退时可含路径。"""
+    if not search:
+        return videos
+    terms = expand_query_terms(search)
+    scored: List[Tuple[float, Dict]] = []
+    for v in videos:
+        combined = f"{v['filename']} {' '.join(v.get('tags') or [])}"
+        if include_path:
+            combined += f" {v.get('path', '')}"
+        combined = combined.lower()
+        score = calc_intent_score(combined, terms)
+        if score > 0:
+            scored.append((score, v))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [x[1] for x in scored]
 
 
 def _safe_json_loads_from_text(s: str) -> Optional[Dict]:
@@ -501,27 +769,63 @@ def build_ai_candidates(videos: List[Dict], max_candidates: int) -> List[Dict]:
     ]
 
 
-def local_fallback_ai_search(question: str, videos: List[Dict], top_k: int) -> Dict:
-    terms = expand_query_terms(question)
-    scored: List[Tuple[float, Dict]] = []
-    for v in videos:
-        combined = f"{v['filename']} {' '.join(v.get('tags', []))} {v.get('path', '')}".lower()
-        score = calc_intent_score(combined, terms)
-        if score > 0:
-            scored.append((score, v))
-    scored.sort(key=lambda x: x[0], reverse=True)
+def local_fallback_ai_search(
+    question: str,
+    videos: List[Dict],
+    top_k: int,
+    *,
+    intent_cfg: Optional[Dict] = None,
+    all_tag_names: Optional[List[str]] = None,
+) -> Dict:
+    icfg = intent_cfg or {}
+    if (
+        icfg.get("enabled")
+        and all_tag_names is not None
+        and is_fastembed_available()
+    ):
+        try:
+            ranked = apply_intent_hybrid_search(
+                videos,
+                question,
+                icfg,
+                all_tag_names,
+                expand_query_terms,
+                calc_intent_score,
+            )
+            if ranked:
+                return {
+                    "matched_ids": [v["id"] for v in ranked[:top_k]],
+                    "reason": "本地标签语义（fastembed）与字符意图混合排序",
+                }
+        except Exception as e:
+            LOG.warning("本地语义检索失败，回退字符意图: %s", e)
+    ranked_lex = filter_videos_lexical_search(
+        videos, question, include_path=True
+    )
     return {
-        "matched_ids": [v["id"] for _, v in scored[:top_k]],
+        "matched_ids": [v["id"] for v in ranked_lex[:top_k]],
         "reason": "使用本地意图匹配作为回退结果（未调用模型或模型不可用）",
     }
 
 
-def list_video_rows(conn: sqlite3.Connection, tag_filter: Optional[str]) -> List[sqlite3.Row]:
-    where = ""
+def list_video_rows(
+    conn: sqlite3.Connection,
+    tag_filter: Optional[str],
+    *,
+    recycled_only: bool = False,
+) -> List[sqlite3.Row]:
+    conditions: List[str] = []
     params: List = []
+    if recycled_only:
+        conditions.append("v.recycled_at IS NOT NULL")
+    else:
+        conditions.append("v.recycled_at IS NULL")
     if tag_filter:
-        where = "WHERE v.id IN (SELECT vt.video_id FROM video_tags vt JOIN tags t ON t.id = vt.tag_id WHERE t.name = ?)"
+        conditions.append(
+            "v.id IN (SELECT vt.video_id FROM video_tags vt JOIN tags t ON t.id = vt.tag_id WHERE t.name = ?)"
+        )
         params.append(tag_filter)
+    where_clause = "WHERE " + " AND ".join(conditions)
 
     sql = f"""
         SELECT
@@ -530,7 +834,7 @@ def list_video_rows(conn: sqlite3.Connection, tag_filter: Optional[str]) -> List
         FROM videos v
         LEFT JOIN video_tags vt ON vt.video_id = v.id
         LEFT JOIN tags t ON t.id = vt.tag_id
-        {where}
+        {where_clause}
         GROUP BY v.id
     """
     return conn.execute(sql, params).fetchall()
@@ -538,6 +842,8 @@ def list_video_rows(conn: sqlite3.Connection, tag_filter: Optional[str]) -> List
 
 def serialize_video_row(row: sqlite3.Row) -> Dict:
     tags = row["tag_names"].split("|") if row["tag_names"] else []
+    keys = row.keys()
+    recycled_at = row["recycled_at"] if "recycled_at" in keys else None
     return {
         "id": row["id"],
         "path": row["path"],
@@ -549,6 +855,8 @@ def serialize_video_row(row: sqlite3.Row) -> Dict:
         "watch_count": row["watch_count"],
         "cover_url": f"/api/covers/{row['cover_file']}" if row["cover_file"] else "",
         "tags": tags,
+        "recycled": recycled_at is not None,
+        "recycled_at": recycled_at,
     }
 
 
@@ -556,13 +864,22 @@ def _db_usage_stats(conn: sqlite3.Connection) -> Dict:
     row = conn.execute(
         """
         SELECT
-            COUNT(*) AS n,
-            COALESCE(SUM(size_bytes), 0) AS total_bytes,
-            COALESCE(SUM(watch_count), 0) AS total_watches,
-            COALESCE(SUM(duration_sec), 0) AS total_duration,
-            COALESCE(AVG(duration_sec), 0) AS avg_duration,
+            COALESCE(SUM(CASE WHEN recycled_at IS NULL THEN 1 ELSE 0 END), 0) AS n,
+            COALESCE(SUM(CASE WHEN recycled_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS n_recycled,
+            COALESCE(SUM(CASE WHEN recycled_at IS NULL THEN size_bytes ELSE 0 END), 0) AS total_bytes,
+            COALESCE(SUM(CASE WHEN recycled_at IS NULL THEN watch_count ELSE 0 END), 0) AS total_watches,
+            COALESCE(SUM(CASE WHEN recycled_at IS NULL THEN duration_sec ELSE 0 END), 0) AS total_duration,
             COALESCE(
-                SUM(CASE WHEN cover_file IS NOT NULL AND cover_file != '' THEN 1 ELSE 0 END),
+                AVG(CASE WHEN recycled_at IS NULL THEN duration_sec ELSE NULL END),
+                0
+            ) AS avg_duration,
+            COALESCE(
+                SUM(
+                    CASE
+                        WHEN recycled_at IS NULL AND cover_file IS NOT NULL AND cover_file != ''
+                        THEN 1 ELSE 0
+                    END
+                ),
                 0
             ) AS with_cover
         FROM videos
@@ -572,6 +889,7 @@ def _db_usage_stats(conn: sqlite3.Connection) -> Dict:
     link_n = conn.execute("SELECT COUNT(*) AS c FROM video_tags").fetchone()["c"]
     return {
         "video_count": int(row["n"] or 0),
+        "recycled_count": int(row["n_recycled"] or 0),
         "tag_count": int(tag_n),
         "video_tag_links": int(link_n),
         "total_bytes": int(row["total_bytes"] or 0),
@@ -630,7 +948,7 @@ def _system_snapshot() -> Dict:
 def _sample_disk_io(sample_size: int) -> Dict:
     """从已入库视频中随机抽样，测量 stat 与首 4KB 读取耗时（仅用户主动触发时调用）。"""
     conn = get_conn()
-    rows = conn.execute("SELECT id, path FROM videos").fetchall()
+    rows = conn.execute("SELECT id, path FROM videos WHERE recycled_at IS NULL").fetchall()
     conn.close()
     if not rows:
         return {
@@ -728,6 +1046,37 @@ def api_config():
             except (TypeError, ValueError):
                 pass
         cfg["stats"] = st
+    player_cfg = payload.get("player")
+    if isinstance(player_cfg, dict):
+        pl = cfg.get("player") or {}
+        if "external_path" in player_cfg:
+            pl["external_path"] = str(player_cfg.get("external_path") or "").strip()
+        cfg["player"] = pl
+    intent_cfg = payload.get("intent")
+    if isinstance(intent_cfg, dict):
+        inc = cfg.get("intent") or {}
+        if "enabled" in intent_cfg:
+            inc["enabled"] = bool(intent_cfg["enabled"])
+        if "model" in intent_cfg:
+            inc["model"] = str(intent_cfg.get("model") or "").strip()
+        if "lexical_blend" in intent_cfg:
+            try:
+                inc["lexical_blend"] = max(
+                    0.0, min(1.0, float(intent_cfg.get("lexical_blend")))
+                )
+            except (TypeError, ValueError):
+                pass
+        if "min_semantic" in intent_cfg:
+            try:
+                inc["min_semantic"] = max(
+                    0.0, min(1.0, float(intent_cfg.get("min_semantic")))
+                )
+            except (TypeError, ValueError):
+                pass
+        if "query_prefix" in intent_cfg:
+            inc["query_prefix"] = str(intent_cfg.get("query_prefix") or "")
+        cfg["intent"] = inc
+        clear_tag_vector_cache()
     save_config(cfg)
     ensure_data_dirs(Path(cfg["data_dir"]))
     safe = dict(cfg)
@@ -736,6 +1085,26 @@ def api_config():
         safe["llm"]["api_key"] = "***"
     LOG.info("保存配置 POST /api/config data_dir=%s library_dirs=%s", safe.get("data_dir"), safe.get("library_dirs"))
     return jsonify({"ok": True, "config": cfg})
+
+
+@app.route("/api/intent/status", methods=["GET"])
+def api_intent_status():
+    """fastembed 是否可用；可选 ?probe=1 试加载模型（会下载）。"""
+    cfg = load_config()
+    icfg = cfg.get("intent") or {}
+    model = (icfg.get("model") or "BAAI/bge-small-zh-v1.5").strip()
+    installed = is_fastembed_available()
+    out: Dict = {
+        "ok": True,
+        "fastembed_installed": installed,
+        "model": model,
+        "probe": None,
+    }
+    if request.args.get("probe") == "1" and installed:
+        out["probe"] = probe_intent_model(model)
+    elif not installed:
+        out["hint"] = "请安装: pip install fastembed（约百余 MB 模型首次使用时下载）"
+    return jsonify(out)
 
 
 @app.route("/api/scan", methods=["POST"])
@@ -777,7 +1146,8 @@ def api_scan():
                 conn.execute(
                     """
                     UPDATE videos
-                    SET filename=?, size_bytes=?, duration_sec=?, modified_at=?, created_at=?, indexed_at=?, search_text=?
+                    SET filename=?, size_bytes=?, duration_sec=?, modified_at=?, created_at=?, indexed_at=?, search_text=?,
+                        recycled_at=NULL
                     WHERE id=?
                     """,
                     (
@@ -802,10 +1172,37 @@ def api_scan():
                 )
                 created += 1
 
+    moved_invalid = 0
+    stale = conn.execute(
+        "SELECT id, path FROM videos WHERE recycled_at IS NULL"
+    ).fetchall()
+    for r in stale:
+        if not Path(r["path"]).is_file():
+            conn.execute(
+                "UPDATE videos SET recycled_at = ? WHERE id = ?",
+                (now, r["id"]),
+            )
+            moved_invalid += 1
+            LOG.info("扫描：路径无效，已移入回收站 id=%s path=%s", r["id"], r["path"][:120])
+
     conn.commit()
     conn.close()
-    LOG.info("扫描结束 created=%s updated=%s skipped=%s（封面请单独点击刷新）", created, updated, skipped)
-    return jsonify({"ok": True, "created": created, "updated": updated, "skipped": skipped})
+    LOG.info(
+        "扫描结束 created=%s updated=%s skipped=%s invalid_to_recycle=%s（封面请单独点击刷新）",
+        created,
+        updated,
+        skipped,
+        moved_invalid,
+    )
+    return jsonify(
+        {
+            "ok": True,
+            "created": created,
+            "updated": updated,
+            "skipped": skipped,
+            "moved_invalid_to_recycle": moved_invalid,
+        }
+    )
 
 
 @app.route("/api/covers/refresh", methods=["POST"])
@@ -820,10 +1217,14 @@ def api_covers_refresh():
     conn = get_conn()
     if only_missing:
         rows = conn.execute(
-            "SELECT * FROM videos WHERE cover_file IS NULL OR cover_file = ''"
+            """
+            SELECT * FROM videos
+            WHERE recycled_at IS NULL
+              AND (cover_file IS NULL OR cover_file = '')
+            """
         ).fetchall()
     else:
-        rows = conn.execute("SELECT * FROM videos").fetchall()
+        rows = conn.execute("SELECT * FROM videos WHERE recycled_at IS NULL").fetchall()
     LOG.info(
         "批量刷新封面开始 only_missing=%s total=%s",
         only_missing,
@@ -901,30 +1302,48 @@ def api_videos():
     page = max(1, page)
     per_page = max(6, min(per_page, 200))
 
+    recycled_only = request.args.get("recycled", "0").lower() in ("1", "true", "yes")
+    cfg = load_config()
+    icfg = cfg.get("intent") or {}
+
     LOG.info(
-        "列表查询 search=%r tag=%r sort=%s order=%s page=%s per_page=%s",
+        "列表查询 search=%r tag=%r sort=%s order=%s page=%s per_page=%s recycled=%s intent=%s",
         search[:80] if search else "",
         tag_filter,
         sort,
         order,
         page,
         per_page,
+        recycled_only,
+        icfg.get("enabled") and is_fastembed_available(),
     )
 
     conn = get_conn()
-    rows = list_video_rows(conn, tag_filter or None)
+    all_tag_rows = conn.execute("SELECT name FROM tags ORDER BY name").fetchall()
+    all_tag_names = [r[0] for r in all_tag_rows]
+    rows = list_video_rows(conn, tag_filter or None, recycled_only=recycled_only)
     videos = [serialize_video_row(r) for r in rows]
 
     if search:
-        terms = expand_query_terms(search)
-        scored = []
-        for v in videos:
-            combined = f"{v['filename']} {' '.join(v['tags'])}".lower()
-            score = calc_intent_score(combined, terms)
-            if score > 0:
-                scored.append((score, v))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        videos = [v for _, v in scored]
+        if icfg.get("enabled") and is_fastembed_available():
+            try:
+                ranked = apply_intent_hybrid_search(
+                    videos,
+                    search,
+                    icfg,
+                    all_tag_names,
+                    expand_query_terms,
+                    calc_intent_score,
+                )
+                if ranked:
+                    videos = ranked
+                else:
+                    videos = filter_videos_lexical_search(videos, search)
+            except Exception as e:
+                LOG.warning("标签语义检索失败，回退字符意图: %s", e)
+                videos = filter_videos_lexical_search(videos, search)
+        else:
+            videos = filter_videos_lexical_search(videos, search)
 
     def sort_key(v: Dict):
         if sort == "filename":
@@ -960,6 +1379,7 @@ def api_videos():
             "page": page,
             "per_page": per_page,
             "total_pages": total_pages,
+            "recycled_view": recycled_only,
         }
     )
 
@@ -976,7 +1396,10 @@ def api_ai_search():
 
     cfg = load_config()
     llm_cfg = cfg.get("llm") or {}
+    intent_cfg = cfg.get("intent") or {}
     conn = get_conn()
+    all_tag_rows = conn.execute("SELECT name FROM tags ORDER BY name").fetchall()
+    all_tag_names = [r[0] for r in all_tag_rows]
     rows = list_video_rows(conn, None)
     conn.close()
     videos = [serialize_video_row(r) for r in rows]
@@ -1016,11 +1439,23 @@ def api_ai_search():
             source = "llm"
             reason = str(llm_ret.get("reason") or "由模型按语义与标签综合排序")
         else:
-            fb = local_fallback_ai_search(question, videos, top_k)
+            fb = local_fallback_ai_search(
+                question,
+                videos,
+                top_k,
+                intent_cfg=intent_cfg,
+                all_tag_names=all_tag_names,
+            )
             matched_ids = fb["matched_ids"]
             reason = f"模型调用失败，已回退本地搜索：{llm_ret.get('error', '')}"
     else:
-        fb = local_fallback_ai_search(question, videos, top_k)
+        fb = local_fallback_ai_search(
+            question,
+            videos,
+            top_k,
+            intent_cfg=intent_cfg,
+            all_tag_names=all_tag_names,
+        )
         matched_ids = fb["matched_ids"]
         reason = fb["reason"]
 
@@ -1082,6 +1517,124 @@ def api_play(video_id: int):
     return jsonify({"ok": True})
 
 
+@app.route("/api/videos/<int:video_id>/recycle", methods=["POST"])
+def api_video_recycle(video_id: int):
+    now = int(time.time())
+    conn = get_conn()
+    cur = conn.execute(
+        "UPDATE videos SET recycled_at = ? WHERE id = ? AND recycled_at IS NULL",
+        (now, video_id),
+    )
+    conn.commit()
+    n = cur.rowcount
+    conn.close()
+    if n == 0:
+        return jsonify({"ok": False, "error": "not found or already in recycle"}), 400
+    LOG.info("移入回收站 video_id=%s", video_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/videos/<int:video_id>/restore", methods=["POST"])
+def api_video_restore(video_id: int):
+    conn = get_conn()
+    cur = conn.execute(
+        "UPDATE videos SET recycled_at = NULL WHERE id = ? AND recycled_at IS NOT NULL",
+        (video_id,),
+    )
+    conn.commit()
+    n = cur.rowcount
+    conn.close()
+    if n == 0:
+        return jsonify({"ok": False, "error": "not found or not in recycle"}), 400
+    LOG.info("从回收站恢复 video_id=%s", video_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/videos/<int:video_id>/open-external", methods=["POST"])
+def api_video_open_external(video_id: int):
+    cfg = load_config()
+    exe = (cfg.get("player") or {}).get("external_path") or ""
+    exe = str(exe).strip()
+    if not exe:
+        return jsonify({"ok": False, "error": "未配置外部播放器路径"}), 400
+    conn = get_conn()
+    row = conn.execute("SELECT path FROM videos WHERE id = ?", (video_id,)).fetchone()
+    conn.close()
+    if not row:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    ok, err = launch_external_player(exe, Path(row["path"]))
+    if not ok:
+        return jsonify({"ok": False, "error": err}), 400
+    LOG.info("外部播放器打开 video_id=%s", video_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/videos/<int:video_id>/reveal", methods=["POST"])
+def api_video_reveal(video_id: int):
+    conn = get_conn()
+    row = conn.execute("SELECT path FROM videos WHERE id = ?", (video_id,)).fetchone()
+    conn.close()
+    if not row:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    ok, err = reveal_path_in_os(row["path"])
+    if not ok:
+        return jsonify({"ok": False, "error": err}), 400
+    LOG.info("打开文件位置 video_id=%s", video_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/recycle/purge", methods=["POST"])
+def api_recycle_purge():
+    """删除回收站内记录对应的磁盘视频文件与封面，并移除数据库行。"""
+    cfg = load_config()
+    data_dir = Path(cfg["data_dir"]).resolve()
+    cover_dir = data_dir / "covers"
+    ensure_data_dirs(data_dir)
+
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT id, path, cover_file FROM videos WHERE recycled_at IS NOT NULL"
+    ).fetchall()
+    files_deleted = 0
+    rows_removed = 0
+    errors: List[str] = []
+    for r in rows:
+        vid = r["id"]
+        p = Path(r["path"])
+        if p.is_file():
+            try:
+                p.unlink()
+                files_deleted += 1
+            except OSError as e:
+                errors.append(f"id={vid} 删除文件: {e}")
+        cf = r["cover_file"]
+        if cf:
+            cp = cover_dir / cf
+            if cp.is_file():
+                try:
+                    cp.unlink()
+                except OSError as e:
+                    errors.append(f"id={vid} 删除封面: {e}")
+        conn.execute("DELETE FROM videos WHERE id = ?", (vid,))
+        rows_removed += 1
+    conn.commit()
+    conn.close()
+    LOG.info(
+        "清空回收站 files_deleted=%s rows_removed=%s errors=%s",
+        files_deleted,
+        rows_removed,
+        len(errors),
+    )
+    return jsonify(
+        {
+            "ok": True,
+            "files_deleted": files_deleted,
+            "rows_removed": rows_removed,
+            "errors": errors,
+        }
+    )
+
+
 @app.route("/api/videos/<int:video_id>/tags", methods=["POST"])
 def api_add_tag(video_id: int):
     payload = request.get_json(force=True) or {}
@@ -1120,7 +1673,9 @@ def api_delete_tag(video_id: int, tag_id: int):
 def api_auto_generate_tags():
     LOG.info("开始根据文件名自动生成标签")
     conn = get_conn()
-    rows = conn.execute("SELECT id, filename FROM videos").fetchall()
+    rows = conn.execute(
+        "SELECT id, filename FROM videos WHERE recycled_at IS NULL"
+    ).fetchall()
     token_count: Dict[str, int] = {}
     for r in rows:
         for t in extract_filename_tokens(r["filename"]):
@@ -1154,6 +1709,158 @@ def api_auto_generate_tags():
     conn.close()
     LOG.info("自动标签完成 generated=%s attached=%s", len(candidates), attached)
     return jsonify({"ok": True, "generated_tags": len(candidates), "attached": attached})
+
+
+@app.route("/api/tags/export", methods=["GET"])
+def api_tags_export():
+    """导出 JSONL：每行 i/n/p/t，供外部大模型重写标签。"""
+    conn = get_conn()
+    videos = conn.execute(
+        "SELECT id, filename, path FROM videos WHERE recycled_at IS NULL ORDER BY id"
+    ).fetchall()
+    tag_rows = conn.execute(
+        """
+        SELECT vt.video_id, t.name
+        FROM video_tags vt
+        JOIN tags t ON t.id = vt.tag_id
+        INNER JOIN videos v ON v.id = vt.video_id AND v.recycled_at IS NULL
+        ORDER BY vt.video_id, t.name
+        """
+    ).fetchall()
+    conn.close()
+    by_vid: Dict[int, List[str]] = {}
+    for r in tag_rows:
+        vid = r["video_id"]
+        by_vid.setdefault(vid, []).append(r["name"])
+
+    lines: List[str] = []
+    for v in videos:
+        vid = v["id"]
+        obj = {"i": vid, "n": v["filename"], "p": v["path"], "t": by_vid.get(vid, [])}
+        lines.append(json.dumps(obj, ensure_ascii=False, separators=(",", ":")))
+    body = "\n".join(lines) + ("\n" if lines else "")
+    LOG.info("导出标签 JSONL 行数=%s", len(lines))
+    return Response(
+        body,
+        mimetype="application/x-ndjson; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="tags_export.jsonl"'},
+    )
+
+
+@app.route("/api/tags/export-readme", methods=["GET"])
+def api_tags_export_readme():
+    text = _read_tags_llm_readme()
+    return Response(
+        text,
+        mimetype="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="TAGS_LLM_README.md"'},
+    )
+
+
+@app.route("/api/tags/import-preview", methods=["POST"])
+def api_tags_import_preview():
+    """
+    导入前预览：与 POST /api/tags/import 使用相同正文与 strict_path，不写库。
+    """
+    strict_path = request.args.get("strict_path", "0").lower() in ("1", "true", "yes")
+    err, raw_bytes = _read_tags_import_request_body()
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    dec_err, text = _decode_tags_import_text(raw_bytes)
+    if dec_err:
+        return jsonify({"ok": False, "error": dec_err}), 400
+    LOG.info("标签导入预览 strict_path=%s", strict_path)
+    return jsonify(_preview_tags_import(text, strict_path))
+
+
+@app.route("/api/tags/import", methods=["POST"])
+def api_tags_import():
+    """
+    导入大模型处理后的 JSONL。multipart 字段 file，或 raw UTF-8 正文。
+    查询参数 strict_path=1：若行内含 p 且与库内 path 不一致则跳过该行。
+    """
+    strict_path = request.args.get("strict_path", "0").lower() in ("1", "true", "yes")
+    err, raw_bytes = _read_tags_import_request_body()
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    dec_err, text = _decode_tags_import_text(raw_bytes)
+    if dec_err:
+        return jsonify({"ok": False, "error": dec_err}), 400
+
+    updated = 0
+    skipped_no_video = 0
+    skipped_path = 0
+    skipped_no_t = 0
+    errors: List[Dict] = []
+
+    conn = get_conn()
+    try:
+        for line_no, line in enumerate(text.splitlines(), 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError as e:
+                errors.append({"line": line_no, "error": f"json: {e}"})
+                continue
+            if not isinstance(obj, dict):
+                errors.append({"line": line_no, "error": "line is not a JSON object"})
+                continue
+            if "i" not in obj:
+                errors.append({"line": line_no, "error": "missing i"})
+                continue
+            try:
+                vid = int(obj["i"])
+            except (TypeError, ValueError):
+                errors.append({"line": line_no, "error": "invalid i"})
+                continue
+            if "t" not in obj:
+                skipped_no_t += 1
+                LOG.warning("导入跳过（无 t） line=%s video_id=%s", line_no, vid)
+                continue
+            row = conn.execute("SELECT id, path FROM videos WHERE id = ?", (vid,)).fetchone()
+            if not row:
+                skipped_no_video += 1
+                continue
+            if strict_path and "p" in obj and obj["p"] is not None:
+                p_in = str(obj["p"])
+                if p_in and p_in != row["path"]:
+                    skipped_path += 1
+                    LOG.warning(
+                        "导入跳过（路径不一致 strict_path） line=%s id=%s", line_no, vid
+                    )
+                    continue
+            tags = _normalize_import_tag_list(obj.get("t"))
+            try:
+                _set_video_tags_replace(conn, vid, tags)
+                conn.commit()
+                updated += 1
+            except Exception as e:
+                conn.rollback()
+                errors.append({"line": line_no, "error": str(e), "i": vid})
+                LOG.exception("导入行失败 line=%s id=%s", line_no, vid)
+    finally:
+        conn.close()
+
+    LOG.info(
+        "导入标签完成 updated=%s skipped_no_video=%s skipped_path=%s skipped_no_t=%s errors=%s",
+        updated,
+        skipped_no_video,
+        skipped_path,
+        skipped_no_t,
+        len(errors),
+    )
+    return jsonify(
+        {
+            "ok": True,
+            "updated": updated,
+            "skipped_no_video": skipped_no_video,
+            "skipped_path": skipped_path,
+            "skipped_no_t": skipped_no_t,
+            "errors": errors,
+        }
+    )
 
 
 @app.route("/api/videos/<int:video_id>/cover", methods=["POST"])
