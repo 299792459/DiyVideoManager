@@ -17,6 +17,8 @@ from urllib import request as url_request
 
 from flask import Flask, Response, jsonify, render_template, request, send_file
 
+from crawler import CrawlerFlaskDeps, register_crawler_routes
+
 try:
     from intent_local import (
         apply_intent_hybrid_search,
@@ -240,6 +242,9 @@ def save_config(cfg: Dict) -> None:
 def ensure_data_dirs(data_dir: Path) -> None:
     data_dir.mkdir(parents=True, exist_ok=True)
     (data_dir / "covers").mkdir(parents=True, exist_ok=True)
+    cr = data_dir / "crawler"
+    for sub in ("input", "output", "cache"):
+        (cr / sub).mkdir(parents=True, exist_ok=True)
 
 
 def db_path() -> Path:
@@ -1285,6 +1290,9 @@ def api_covers_refresh():
 
 @app.route("/api/videos/<int:video_id>/cover/refresh", methods=["POST"])
 def api_video_cover_refresh(video_id: int):
+    payload = request.get_json(force=True, silent=True) or {}
+    force = bool(payload.get("force"))
+
     cfg = load_config()
     data_dir = Path(cfg["data_dir"]).resolve()
     cover_dir = data_dir / "covers"
@@ -1296,6 +1304,23 @@ def api_video_cover_refresh(video_id: int):
         conn.close()
         LOG.warning("刷新封面：视频不存在 video_id=%s", video_id)
         return jsonify({"ok": False, "error": "not found"}), 404
+
+    if not force:
+        cf = row["cover_file"]
+        if cf and str(cf).strip():
+            existing = cover_dir / cf
+            if existing.is_file():
+                conn.close()
+                LOG.info("单条刷新封面：已有有效封面且未强制，跳过 video_id=%s", video_id)
+                return jsonify(
+                    {
+                        "ok": True,
+                        "skipped": True,
+                        "cover_url": f"/api/covers/{cf}",
+                        "message": "已有封面，未重新生成（需强制请传 force:true）",
+                    }
+                )
+
     ok, msg = refresh_cover_for_row(conn, row, cover_dir)
     conn.commit()
     cover_url = ""
@@ -1305,8 +1330,8 @@ def api_video_cover_refresh(video_id: int):
             cover_url = f"/api/covers/{row2['cover_file']}"
     conn.close()
     if ok:
-        LOG.info("单条刷新封面成功 video_id=%s filename=%s", video_id, row["filename"])
-        return jsonify({"ok": True, "cover_url": cover_url})
+        LOG.info("单条刷新封面成功 video_id=%s filename=%s force=%s", video_id, row["filename"], force)
+        return jsonify({"ok": True, "skipped": False, "cover_url": cover_url, "force": force})
     LOG.warning("单条刷新封面失败 video_id=%s %s", video_id, msg)
     return jsonify({"ok": False, "error": msg}), 500
 
@@ -1980,6 +2005,20 @@ def api_stats_sample():
             "ts": int(time.time()),
         }
     )
+
+
+register_crawler_routes(
+    app,
+    CrawlerFlaskDeps(
+        log=LOG,
+        load_config=load_config,
+        ensure_data_dirs=ensure_data_dirs,
+        get_conn=get_conn,
+        clear_tag_vector_cache=clear_tag_vector_cache,
+        normalize_import_tag_list=_normalize_import_tag_list,
+        set_video_tags_replace=_set_video_tags_replace,
+    ),
+)
 
 
 if __name__ == "__main__":

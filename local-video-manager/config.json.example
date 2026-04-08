@@ -1,0 +1,25 @@
+{
+  "data_dir": "./data",
+  "library_dirs": [],
+  "llm": {
+    "base_url": "https://api.openai.com/v1",
+    "api_key": "",
+    "model": "gpt-4o-mini",
+    "max_candidates": 120,
+    "enabled": false
+  },
+  "stats": {
+    "performance_sampling_enabled": false,
+    "sample_size": 30
+  },
+  "player": {
+    "external_path": ""
+  },
+  "intent": {
+    "enabled": false,
+    "model": "BAAI/bge-small-zh-v1.5",
+    "lexical_blend": 0.42,
+    "min_semantic": 0.18,
+    "query_prefix": ""
+  }
+}

@@ -104,12 +104,31 @@
       <div class="actions">
         <button id="saveConfigBtn">保存配置</button>
         <button id="scanBtn">扫描视频</button>
-        <button id="refreshCoversMissingBtn">刷新封面（仅缺封面）</button>
-        <button id="refreshCoversAllBtn">重新生成全部封面</button>
+        <button id="refreshCoversMissingBtn" title="只处理当前没有封面的视频">批量刷新封面（跳过已有）</button>
+        <button id="refreshCoversAllBtn" title="全部重新抽帧，无论是否已有封面">批量强制刷新全部</button>
         <button id="autoTagBtn">根据文件名自动打标签</button>
         <button id="exportAiDataBtn">导出AI数据(JSONL)</button>
       </div>
       <div id="settingsStatus" class="inline-status"></div>
+    </section>
+
+    <section class="panel">
+      <h2>爬虫元数据（mock）</h2>
+      <p class="muted small">
+        输入/输出默认位于<strong>数据目录</strong>下 <code>crawler/input</code>、<code>crawler/output</code>。
+        当前步骤 1 为本地 mock 匹配（文件名子串 → 代号/演员/标签/封面 URL），详见 <code>docs/CRAWLER_README.md</code>。
+      </p>
+      <div class="actions">
+        <input type="file" id="crawlerRunFile" accept=".jsonl,.txt,text/plain,application/json" style="display:none" />
+        <button type="button" id="crawlerRunPickBtn">选择 JSONL 并运行爬虫…</button>
+        <a id="crawlerLastDownload" class="muted small" href="#" style="display:none" target="_blank" rel="noopener">下载上次输出</a>
+      </div>
+      <p class="muted small">将爬虫生成的结果文件再导入库内：整批<strong>替换标签</strong>，并对含 <code>cover_url</code> 的行<strong>替换封面</strong>（回收站中的条目会跳过）。</p>
+      <div class="actions">
+        <input type="file" id="crawlerImportFile" accept=".jsonl,.txt,text/plain,application/json" style="display:none" />
+        <button type="button" id="crawlerImportPickBtn">导入爬虫结果（标签+封面）…</button>
+        <label class="compact-inline" title="若某行含 p 且与库内路径不一致则跳过该行"><input type="checkbox" id="crawlerImportStrictPath" /> 严格校验路径</label>
+      </div>
     </section>
 
     <section class="panel">
@@ -549,7 +568,8 @@
               ${extPlay}
               <button type="button" data-act="reveal" data-id="${v.id}">打开位置</button>
               <button type="button" data-act="add-tag" data-id="${v.id}">加标签</button>
-              <button type="button" data-act="refresh-cover" data-id="${v.id}">刷新封面</button>
+              <button type="button" data-act="refresh-cover" data-id="${v.id}" title="无封面时生成；已有封面则跳过">刷新封面</button>
+              <button type="button" data-act="refresh-cover-force" data-id="${v.id}" title="无论是否已有封面都重新生成">强刷封面</button>
               <button type="button" data-act="cover" data-id="${v.id}">换封面</button>
               ${delOrRestore}
             </div>
@@ -611,7 +631,7 @@
     }
 
     async function refreshCovers(onlyMissing) {
-      setSettingsStatus(onlyMissing ? "正在刷新封面（仅缺封面）..." : "正在重新生成全部封面...");
+      setSettingsStatus(onlyMissing ? "正在批量刷新（跳过已有封面）..." : "正在批量强制刷新全部封面...");
       const r = await fetch("/api/covers/refresh", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -629,10 +649,20 @@
       setSettingsStatus(msg, data.failed > 0);
     }
 
-    async function refreshOneCover(videoId) {
-      setVideoStatus("正在刷新该视频封面...");
-      const r = await fetch(`/api/videos/${videoId}/cover/refresh`, { method: "POST" });
+    async function refreshOneCover(videoId, force = false) {
+      setVideoStatus(force ? "正在强制重新生成封面..." : "正在刷新封面...");
+      const r = await fetch(`/api/videos/${videoId}/cover/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force: !!force })
+      });
       const data = await r.json();
+      if (data.ok && data.skipped) {
+        if (listMode === "browse") await queryVideos(currentPage);
+        else renderAiPage();
+        setVideoStatus(data.message || "已有封面，已跳过");
+        return;
+      }
       if (data.ok) {
         if (listMode === "ai" && data.cover_url) {
           const v = aiFullVideos.find(x => x.id === videoId);
@@ -898,6 +928,89 @@
       if (f) importTagsFromFile(f);
     });
 
+    document.getElementById("crawlerRunPickBtn").addEventListener("click", () => {
+      document.getElementById("crawlerRunFile").click();
+    });
+    document.getElementById("crawlerRunFile").addEventListener("change", async (e) => {
+      const f = e.target.files && e.target.files[0];
+      e.target.value = "";
+      if (!f) return;
+      setSettingsStatus("正在运行爬虫流水线…");
+      const fd = new FormData();
+      fd.append("file", f);
+      try {
+        const r = await fetch("/api/crawler/run", { method: "POST", body: fd });
+        const data = await r.json();
+        if (!data.ok) {
+          setSettingsStatus(data.error || "爬虫失败", true);
+          return;
+        }
+        const dl = document.getElementById("crawlerLastDownload");
+        dl.href = data.download_url || "#";
+        dl.style.display = "inline";
+        dl.textContent = "下载输出：" + (data.output_file || "");
+        setSettingsStatus(
+          `完成：写入 ${data.lines_out != null ? data.lines_out : "?"} 行，` +
+            `跳过无匹配 ${data.skipped_no_match != null ? data.skipped_no_match : "?"}，` +
+            `输入已保存（见数据目录 crawler/input）`
+        );
+      } catch (err) {
+        setSettingsStatus("请求失败: " + err, true);
+      }
+    });
+
+    async function importCrawlerResult(file) {
+      const strict = document.getElementById("crawlerImportStrictPath").checked ? "1" : "0";
+      if (!window.confirm("将按文件中的 i 整批替换标签，并下载 cover_url 替换封面。确定？")) {
+        setSettingsStatus("已取消导入");
+        return;
+      }
+      setSettingsStatus("正在导入爬虫结果…");
+      const fd = new FormData();
+      fd.append("file", file);
+      try {
+        const r = await fetch("/api/crawler/import?strict_path=" + encodeURIComponent(strict), {
+          method: "POST",
+          body: fd
+        });
+        const data = await r.json();
+        if (!data.ok) {
+          setSettingsStatus(data.error || "导入失败", true);
+          return;
+        }
+        const parts = [
+          `已更新 ${data.updated} 条`,
+          data.covers_updated != null ? `封面 ${data.covers_updated}` : "",
+          data.skipped_recycled ? `跳过回收站 ${data.skipped_recycled}` : "",
+          data.skipped_no_video ? `无此 ID ${data.skipped_no_video}` : "",
+          data.skipped_path ? `路径不一致 ${data.skipped_path}` : ""
+        ].filter(Boolean);
+        let msg = parts.join("，");
+        if (data.cover_errors && data.cover_errors.length) {
+          msg += " | 封面失败 " + data.cover_errors.length + "（见控制台）";
+          console.warn("crawler cover_errors", data.cover_errors);
+        }
+        if (data.errors && data.errors.length) {
+          msg += " | 错误行 " + data.errors.length;
+          console.warn("crawler import errors", data.errors);
+        }
+        setSettingsStatus(msg, !!(data.errors && data.errors.length));
+        listMode = "browse";
+        await queryVideos(1);
+      } catch (err) {
+        setSettingsStatus("请求失败: " + err, true);
+      }
+    }
+
+    document.getElementById("crawlerImportPickBtn").addEventListener("click", () => {
+      document.getElementById("crawlerImportFile").click();
+    });
+    document.getElementById("crawlerImportFile").addEventListener("change", (e) => {
+      const f = e.target.files && e.target.files[0];
+      e.target.value = "";
+      if (f) importCrawlerResult(f);
+    });
+
     async function probeIntentModel() {
       const el = document.getElementById("intentStatusLine");
       el.textContent = "正在检测（首次会下载模型，请稍候）…";
@@ -956,7 +1069,7 @@
     document.getElementById("scanBtn").addEventListener("click", scanVideos);
     document.getElementById("refreshCoversMissingBtn").addEventListener("click", () => refreshCovers(true));
     document.getElementById("refreshCoversAllBtn").addEventListener("click", () => {
-      if (!confirm("确定要为所有视频重新生成默认封面吗？")) return;
+      if (!confirm("将强制为库中全部（非回收站）视频重新生成封面，无论当前是否已有封面。确定？")) return;
       refreshCovers(false);
     });
     document.getElementById("autoTagBtn").addEventListener("click", autoGenerateTags);
@@ -1058,7 +1171,8 @@
       }
       if (act === "restore") await restoreVideo(id);
       if (act === "add-tag") await addTag(id);
-      if (act === "refresh-cover") await refreshOneCover(id);
+      if (act === "refresh-cover") await refreshOneCover(id, false);
+      if (act === "refresh-cover-force") await refreshOneCover(id, true);
       if (act === "cover") await uploadCover(id);
     });
 
