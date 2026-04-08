@@ -472,6 +472,53 @@ button.tag.tag-filter:hover {
   box-shadow: 0 0 0 1px #6c8bff;
 }
 
+button.tag.tag-filter.tag-filter-active {
+  background: #2a5c40;
+  box-shadow: 0 0 0 1px #5ecf8a;
+}
+
+.tag-filter-bar {
+  margin: 6px 0 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.tag-bar-h {
+  color: #9a9a9a;
+  margin-right: 4px;
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid #4a6a9a;
+  background: #243045;
+  color: #e0e8ff;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tag-chip:hover {
+  border-color: #6c8bff;
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  color: #8ab4ff;
+  cursor: pointer;
+  font-size: 12px;
+  text-decoration: underline;
+  padding: 2px 6px;
+}
+
 .muted {
   color: #777;
   font-size: 12px;

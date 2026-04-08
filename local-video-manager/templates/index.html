@@ -27,9 +27,10 @@
           <div class="search-mod-h">本地筛选</div>
           <div class="search-mod-body">
             <input id="searchInput" type="text" class="inp-block" placeholder="关键词 / 意图词" />
+            <div id="tagFilterBar" class="tag-filter-bar" aria-label="已选标签筛选"></div>
             <div class="search-mod-inline">
-              <select id="tagFilter" class="inp-tight" title="标签">
-                <option value="">全部标签</option>
+              <select id="tagFilter" class="inp-tight" title="向筛选添加标签（多选为同时满足 AND）">
+                <option value="">（下拉添加标签）</option>
               </select>
               <select id="sortSelect" class="inp-sort" title="排序">
                 <option value="modified_at">最近修改</option>
@@ -245,6 +246,9 @@
     const LS_CARD = "vm_grid_card_min";
     const LS_PER_PAGE = "vm_per_page";
     const LS_SHOW_RECYCLE = "vm_show_recycle";
+    const LS_TAG_FILTERS = "vm_tag_filters";
+    /** 多选标签筛选（AND：视频须同时包含所选标签）；顺序为点击顺序 */
+    let selectedTagFilters = [];
     let externalPlayerConfigured = false;
 
     function setVideoStatus(text, isErr = false) {
@@ -354,6 +358,29 @@
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;");
+    }
+
+    function saveTagFiltersToStorage() {
+      try {
+        localStorage.setItem(LS_TAG_FILTERS, JSON.stringify(selectedTagFilters));
+      } catch (e) {}
+    }
+
+    function renderTagFilterBar() {
+      const box = document.getElementById("tagFilterBar");
+      if (!box) return;
+      if (!selectedTagFilters.length) {
+        box.innerHTML =
+          "<span class=\"muted small\">标签筛选：点击卡片上的标签可多选（<strong>同时满足</strong>）；同一标签再点一次可取消。亦可从下方下拉添加。</span>";
+        return;
+      }
+      const chips = selectedTagFilters
+        .map(t => {
+          const enc = encodeURIComponent(t);
+          return `<button type="button" class="tag-chip" data-chip-tag="${enc}">${escHtml(t)} ×</button>`;
+        })
+        .join("");
+      box.innerHTML = `<span class="tag-bar-h">已选 ${selectedTagFilters.length} 个（AND）</span>${chips}<button type="button" class="btn-link" id="tagFilterClearAll">清空</button>`;
     }
 
     async function loadConfig() {
@@ -495,7 +522,8 @@
         card.className = "card" + (v.recycled ? " card-recycled" : "");
         const tags = (v.tags || []).map(t => {
           const enc = encodeURIComponent(t);
-          return `<button type="button" class="tag tag-filter" data-filter-tag="${enc}" title="点击按此标签筛选">${escHtml(t)}</button>`;
+          const active = selectedTagFilters.includes(t) ? " tag-filter-active" : "";
+          return `<button type="button" class="tag tag-filter${active}" data-filter-tag="${enc}" title="点击加入/移出筛选（多选为同时满足）">${escHtml(t)}</button>`;
         }).join("");
         const extPlay = externalPlayerConfigured
           ? `<button type="button" data-act="external-play" data-id="${v.id}">外部播放</button>`
@@ -535,31 +563,35 @@
       listMode = "browse";
       if (page != null && page >= 1) currentPage = page;
       const q = document.getElementById("searchInput").value.trim();
-      const tag = tagFilterEl.value;
       const sort = document.getElementById("sortSelect").value;
       const order = document.getElementById("orderSelect").value;
       const perPage = Number(document.getElementById("perPageSelect").value);
       const showR = document.getElementById("showRecycleCheck").checked;
       const params = new URLSearchParams({
         search: q,
-        tag,
         sort,
         order,
         page: String(currentPage),
         per_page: String(perPage),
         recycled: showR ? "1" : "0"
       });
+      selectedTagFilters.forEach(t => params.append("tags", t));
       const r = await fetch(`/api/videos?${params.toString()}`);
       const data = await r.json();
-      const oldTag = tagFilterEl.value;
-      tagFilterEl.innerHTML = `<option value="">全部标签</option>` + (data.tags || []).map(t => `<option value="${t.name}">${t.name}${t.is_auto ? " (自动)" : ""}</option>`).join("");
-      tagFilterEl.value = oldTag;
+      tagFilterEl.innerHTML =
+        `<option value="">（下拉添加标签）</option>` +
+        (data.tags || []).map(t => `<option value="${t.name.replace(/"/g, "&quot;")}">${t.name}${t.is_auto ? " (自动)" : ""}</option>`).join("");
       if (data.page != null) currentPage = data.page;
       renderVideos(data.videos || []);
+      renderTagFilterBar();
       updatePaginationUI(data);
       const total = data.total != null ? data.total : (data.videos || []).length;
       const rb = data.recycled_view ? "（回收站）" : "";
-      setVideoStatus(`已加载 第 ${currentPage} 页，本页 ${(data.videos || []).length} 条，合计 ${total} 条${rb}`);
+      const tf =
+        selectedTagFilters.length > 0
+          ? ` | 标签AND ${selectedTagFilters.length} 个`
+          : "";
+      setVideoStatus(`已加载 第 ${currentPage} 页，本页 ${(data.videos || []).length} 条，合计 ${total} 条${rb}${tf}`);
     }
 
     async function scanVideos() {
@@ -887,6 +919,39 @@
     }
 
     document.getElementById("intentProbeBtn").addEventListener("click", probeIntentModel);
+
+    document.getElementById("tagFilterBar").addEventListener("click", e => {
+      const chip = e.target.closest("[data-chip-tag]");
+      if (chip) {
+        const name = decodeURIComponent(chip.getAttribute("data-chip-tag"));
+        const i = selectedTagFilters.indexOf(name);
+        if (i >= 0) selectedTagFilters.splice(i, 1);
+        saveTagFiltersToStorage();
+        renderTagFilterBar();
+        currentPage = 1;
+        queryVideos(1);
+        return;
+      }
+      if (e.target.id === "tagFilterClearAll") {
+        selectedTagFilters = [];
+        saveTagFiltersToStorage();
+        renderTagFilterBar();
+        currentPage = 1;
+        queryVideos(1);
+      }
+    });
+
+    tagFilterEl.addEventListener("change", () => {
+      const v = tagFilterEl.value;
+      if (!v) return;
+      if (!selectedTagFilters.includes(v)) selectedTagFilters.push(v);
+      tagFilterEl.value = "";
+      saveTagFiltersToStorage();
+      renderTagFilterBar();
+      currentPage = 1;
+      queryVideos(1);
+    });
+
     document.getElementById("saveConfigBtn").addEventListener("click", saveConfig);
     document.getElementById("scanBtn").addEventListener("click", scanVideos);
     document.getElementById("refreshCoversMissingBtn").addEventListener("click", () => refreshCovers(true));
@@ -962,10 +1027,18 @@
         if (raw) {
           try {
             const tagName = decodeURIComponent(raw);
-            tagFilterEl.value = tagName;
+            const idx = selectedTagFilters.indexOf(tagName);
+            if (idx >= 0) selectedTagFilters.splice(idx, 1);
+            else selectedTagFilters.push(tagName);
+            saveTagFiltersToStorage();
+            renderTagFilterBar();
             currentPage = 1;
             await queryVideos(1);
-            setVideoStatus(`已按标签筛选：${tagName}`);
+            setVideoStatus(
+              selectedTagFilters.length
+                ? `标签筛选（AND）：${selectedTagFilters.join("、")}`
+                : "已取消该标签或清空相关筛选"
+            );
           } catch (err) {
             setVideoStatus("标签解析失败", true);
           }
@@ -1006,6 +1079,16 @@
         applyCardSize(280);
       }
       await loadConfig();
+      try {
+        const raw = localStorage.getItem(LS_TAG_FILTERS);
+        if (raw) {
+          const arr = JSON.parse(raw);
+          if (Array.isArray(arr)) {
+            selectedTagFilters = arr.filter(x => typeof x === "string" && x.trim());
+          }
+        }
+      } catch (e) {}
+      renderTagFilterBar();
       await queryVideos(1);
     })();
   </script>

@@ -808,9 +808,24 @@ def local_fallback_ai_search(
     }
 
 
+def _normalize_tag_filters(names: Optional[List[str]]) -> List[str]:
+    """去重、去空，保持顺序；用于 ?tags= 多参数与单参数 tag= 兼容。"""
+    if not names:
+        return []
+    seen = set()
+    out: List[str] = []
+    for x in names:
+        s = (x or "").strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out[:24]
+
+
 def list_video_rows(
     conn: sqlite3.Connection,
-    tag_filter: Optional[str],
+    tag_filters: Optional[List[str]],
     *,
     recycled_only: bool = False,
 ) -> List[sqlite3.Row]:
@@ -820,11 +835,23 @@ def list_video_rows(
         conditions.append("v.recycled_at IS NOT NULL")
     else:
         conditions.append("v.recycled_at IS NULL")
-    if tag_filter:
+    tf = _normalize_tag_filters(tag_filters)
+    if tf:
+        n = len(tf)
+        ph = ",".join(["?"] * n)
         conditions.append(
-            "v.id IN (SELECT vt.video_id FROM video_tags vt JOIN tags t ON t.id = vt.tag_id WHERE t.name = ?)"
+            f"""
+            v.id IN (
+                SELECT vt.video_id FROM video_tags vt
+                JOIN tags t ON t.id = vt.tag_id
+                WHERE t.name IN ({ph})
+                GROUP BY vt.video_id
+                HAVING COUNT(DISTINCT t.name) = ?
+            )
+            """
         )
-        params.append(tag_filter)
+        params.extend(tf)
+        params.append(n)
     where_clause = "WHERE " + " AND ".join(conditions)
 
     sql = f"""
@@ -1287,7 +1314,11 @@ def api_video_cover_refresh(video_id: int):
 @app.route("/api/videos", methods=["GET"])
 def api_videos():
     search = (request.args.get("search") or "").strip()
-    tag_filter = (request.args.get("tag") or "").strip()
+    tag_filters = _normalize_tag_filters(request.args.getlist("tags"))
+    if not tag_filters:
+        legacy = (request.args.get("tag") or "").strip()
+        if legacy:
+            tag_filters = _normalize_tag_filters([legacy])
     sort = (request.args.get("sort") or "modified_at").strip()
     order = (request.args.get("order") or "desc").strip().lower()
     order = "desc" if order not in ("asc", "desc") else order
@@ -1307,9 +1338,9 @@ def api_videos():
     icfg = cfg.get("intent") or {}
 
     LOG.info(
-        "列表查询 search=%r tag=%r sort=%s order=%s page=%s per_page=%s recycled=%s intent=%s",
+        "列表查询 search=%r tags=%r sort=%s order=%s page=%s per_page=%s recycled=%s intent=%s",
         search[:80] if search else "",
-        tag_filter,
+        tag_filters,
         sort,
         order,
         page,
@@ -1321,7 +1352,7 @@ def api_videos():
     conn = get_conn()
     all_tag_rows = conn.execute("SELECT name FROM tags ORDER BY name").fetchall()
     all_tag_names = [r[0] for r in all_tag_rows]
-    rows = list_video_rows(conn, tag_filter or None, recycled_only=recycled_only)
+    rows = list_video_rows(conn, tag_filters or None, recycled_only=recycled_only)
     videos = [serialize_video_row(r) for r in rows]
 
     if search:
@@ -1380,6 +1411,7 @@ def api_videos():
             "per_page": per_page,
             "total_pages": total_pages,
             "recycled_view": recycled_only,
+            "tag_filters": tag_filters,
         }
     )
 
