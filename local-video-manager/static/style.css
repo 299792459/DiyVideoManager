@@ -588,3 +588,77 @@ dialog {
 .btn-danger:hover {
   background: #502828;
 }
+
+/* 视频卡片：主操作仅「播放」，其余在「更多」内 */
+.actions-main {
+  align-items: flex-start;
+  flex-wrap: nowrap;
+  gap: 10px;
+}
+
+.card-more {
+  flex: 1;
+  min-width: 0;
+}
+
+.card-more summary.btn-more {
+  list-style: none;
+  cursor: pointer;
+  display: inline-block;
+  padding: 6px 12px;
+  font-size: 13px;
+  border: 1px solid #444;
+  border-radius: 6px;
+  background: #252525;
+  color: #ccc;
+}
+
+.card-more summary.btn-more::-webkit-details-marker {
+  display: none;
+}
+
+.card-more summary.btn-more:hover {
+  border-color: #6c8bff;
+  color: #fff;
+}
+
+.card-more-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #2e2e2e;
+}
+
+.tags-editable .tag-with-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin: 2px 6px 2px 0;
+  vertical-align: middle;
+}
+
+.tag-act {
+  padding: 0 5px;
+  min-width: 22px;
+  font-size: 12px;
+  line-height: 1.3;
+  border-radius: 4px;
+  border: 1px solid #444;
+  background: #2a2a2a;
+  color: #9db8ff;
+}
+
+.tag-act:hover {
+  border-color: #6c8bff;
+}
+
+.tag-act-del {
+  color: #ff9e9e;
+  border-color: #5a3a3a;
+}
+
+.tag-act-del:hover {
+  background: #3a2525;
+}

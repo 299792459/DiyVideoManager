@@ -91,6 +91,8 @@ python app.py
 | `POST /api/tags/import-preview` | 导入前预览：与 `import` 相同正文与 `strict_path`，不写库；返回 `would_apply`、`samples`（旧/新标签示例）、各类跳过计数与解析错误。 |
 | `POST /api/tags/import` | 导入大模型处理后的 JSONL：`multipart/form-data` 字段 `file`，或 **raw body** 直接贴全文。可选 `?strict_path=1`：行内 `p` 与库不一致时跳过。返回 `updated`、`skipped_*`、`errors`。 |
 | `POST /api/videos/<id>/tags/clear` | 移除该视频的**全部**标签，并重写 `search_text`。 |
+| `PATCH /api/videos/<id>/tags/<tag_id>` | JSON `{"name":"新名称"}`：将该视频上的该关联改为指向全局同名标签（已存在则复用；若该视频已有目标标签则仅去掉旧关联）。返回 **`tag_id`**（结果标签 id）。 |
+| `GET /api/videos` 每条视频 | 除 **`tags`**（名称数组）外增加 **`tag_items`**：`[{id,name},...]`，供前端逐条改/删。 |
 | `GET /api/tags/catalog` | 标签管理页用：返回全部标签及 **`video_count`**（引用视频数）。 |
 | `PATCH /api/tags/<tag_id>` | JSON `{"name":"新名称"}` 重命名；与已有标签重名则 **409**。 |
 | `DELETE /api/tags/<tag_id>` | 删除该标签及其所有视频关联；返回 **`affected_videos`**。 |

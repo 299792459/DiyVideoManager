@@ -578,11 +578,22 @@
       videos.forEach(v => {
         const card = document.createElement("article");
         card.className = "card" + (v.recycled ? " card-recycled" : "");
-        const tags = (v.tags || []).map(t => {
-          const enc = encodeURIComponent(t);
-          const active = selectedTagFilters.includes(t) ? " tag-filter-active" : "";
-          return `<button type="button" class="tag tag-filter${active}" data-filter-tag="${enc}" title="点击加入/移出筛选（多选为同时满足）">${escHtml(t)}</button>`;
+        const items = v.tag_items && v.tag_items.length
+          ? v.tag_items
+          : (v.tags || []).map(name => ({ id: null, name }));
+        const tagBlocks = items.map(item => {
+          const enc = encodeURIComponent(item.name);
+          const active = selectedTagFilters.includes(item.name) ? " tag-filter-active" : "";
+          const idAttr = item.id != null ? ` data-tag-id="${item.id}"` : "";
+          const ops =
+            item.id != null
+              ? `<button type="button" class="tag-act" data-act="edit-tag" data-vid="${v.id}"${idAttr} title="改名">改</button>
+                 <button type="button" class="tag-act tag-act-del" data-act="remove-tag" data-vid="${v.id}"${idAttr} title="从此视频移除">×</button>`
+              : "";
+          return `<span class="tag-with-actions">
+            <button type="button" class="tag tag-filter${active}" data-filter-tag="${enc}" title="点击加入/移出筛选（多选为同时满足）">${escHtml(item.name)}</button>${ops}</span>`;
         }).join("");
+        const tagsHtml = tagBlocks || "<span class='muted'>暂无标签</span>";
         const extPlay = externalPlayerConfigured
           ? `<button type="button" data-act="external-play" data-id="${v.id}">外部播放</button>`
           : "";
@@ -601,17 +612,22 @@
               大小: <b>${fmtSize(v.size_bytes)}</b>
             </p>
             <p class="meta">修改时间: ${fmtTime(v.modified_at)}</p>
-            <div class="tags">${tags || "<span class='muted'>暂无标签</span>"}</div>
-            <div class="actions">
+            <div class="tags tags-editable">${tagsHtml}</div>
+            <div class="actions actions-main">
               <button type="button" data-act="play" data-id="${v.id}">播放</button>
-              ${extPlay}
-              <button type="button" data-act="reveal" data-id="${v.id}">打开位置</button>
-              <button type="button" data-act="add-tag" data-id="${v.id}">加标签</button>
-              <button type="button" data-act="clear-tags" data-id="${v.id}" title="移除该视频的全部标签">清标签</button>
-              <button type="button" data-act="refresh-cover" data-id="${v.id}" title="无封面时生成；已有封面则跳过">刷新封面</button>
-              <button type="button" data-act="refresh-cover-force" data-id="${v.id}" title="无论是否已有封面都重新生成">强刷封面</button>
-              <button type="button" data-act="cover" data-id="${v.id}">换封面</button>
-              ${delOrRestore}
+              <details class="card-more">
+                <summary class="btn-more" title="其他操作">更多 ▾</summary>
+                <div class="card-more-btns">
+                  ${extPlay}
+                  <button type="button" data-act="reveal" data-id="${v.id}">打开位置</button>
+                  <button type="button" data-act="add-tag" data-id="${v.id}">加标签</button>
+                  <button type="button" data-act="clear-tags" data-id="${v.id}" title="移除该视频的全部标签">清标签</button>
+                  <button type="button" data-act="refresh-cover" data-id="${v.id}" title="无封面时生成；已有封面则跳过">刷新封面</button>
+                  <button type="button" data-act="refresh-cover-force" data-id="${v.id}" title="无论是否已有封面都重新生成">强刷封面</button>
+                  <button type="button" data-act="cover" data-id="${v.id}">换封面</button>
+                  ${delOrRestore}
+                </div>
+              </details>
             </div>
           </div>
         `;
@@ -740,7 +756,81 @@
       if (listMode === "browse") await queryVideos(currentPage);
       else {
         const v = aiFullVideos.find(x => x.id === videoId);
-        if (v) v.tags = [];
+        if (v) {
+          v.tags = [];
+          v.tag_items = [];
+        }
+        renderAiPage();
+      }
+    }
+
+    function _patchVideoTagInAiList(videoId, updater) {
+      const v = aiFullVideos.find(x => x.id === videoId);
+      if (v) updater(v);
+    }
+
+    async function removeSingleTagFromVideo(videoId, tagId) {
+      if (!confirm("从该视频移除此标签？")) return;
+      setVideoStatus("正在移除标签…");
+      const r = await fetch(`/api/videos/${videoId}/tags/${tagId}`, { method: "DELETE" });
+      const data = await r.json();
+      if (!data.ok) {
+        setVideoStatus(data.error || "移除失败", true);
+        return;
+      }
+      setVideoStatus("已移除该标签");
+      if (listMode === "browse") await queryVideos(currentPage);
+      else {
+        _patchVideoTagInAiList(videoId, v => {
+          v.tag_items = (v.tag_items || []).filter(t => t.id !== tagId);
+          v.tags = (v.tag_items || []).map(t => t.name);
+        });
+        renderAiPage();
+      }
+    }
+
+    async function editSingleTagOnVideo(videoId, tagId) {
+      const list = listMode === "ai" ? aiFullVideos : currentVideos;
+      const row = list.find(x => x.id === videoId);
+      const cur = row && row.tag_items ? row.tag_items.find(t => t.id === tagId) : null;
+      const curName = cur ? cur.name : "";
+      const nn = prompt("修改该视频上的标签名称（将使用库中已有同名标签或新建）", curName);
+      if (nn === null) return;
+      const name = nn.trim();
+      if (!name) {
+        setVideoStatus("名称不能为空", true);
+        return;
+      }
+      if (name === curName) return;
+      setVideoStatus("正在修改标签…");
+      const r = await fetch(`/api/videos/${videoId}/tags/${tagId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name })
+      });
+      const data = await r.json();
+      if (!data.ok) {
+        setVideoStatus(data.error || "修改失败", true);
+        return;
+      }
+      const newId = data.tag_id != null ? data.tag_id : tagId;
+      setVideoStatus("标签已更新");
+      if (listMode === "browse") await queryVideos(currentPage);
+      else {
+        _patchVideoTagInAiList(videoId, v => {
+          if (!v.tag_items) v.tag_items = [];
+          const i = v.tag_items.findIndex(t => t.id === tagId);
+          if (i >= 0) {
+            v.tag_items[i] = { id: newId, name };
+            const seen = new Set();
+            v.tag_items = v.tag_items.filter(t => {
+              if (seen.has(t.id)) return false;
+              seen.add(t.id);
+              return true;
+            });
+          }
+          v.tags = v.tag_items.map(t => t.name);
+        });
         renderAiPage();
       }
     }
@@ -839,11 +929,17 @@
       });
       const data = await r.json();
       if (data.ok) {
+        const tid = data.tag_id;
+        const name = tag.trim();
         if (listMode === "ai") {
           const v = aiFullVideos.find(x => x.id === videoId);
           if (v) {
             v.tags = v.tags || [];
-            if (!v.tags.includes(tag.trim())) v.tags.push(tag.trim());
+            if (!v.tags.includes(name)) v.tags.push(name);
+            if (tid != null) {
+              v.tag_items = v.tag_items || [];
+              if (!v.tag_items.some(x => x.id === tid)) v.tag_items.push({ id: tid, name });
+            }
           }
           renderAiPage();
         } else {
@@ -1286,6 +1382,22 @@
     });
 
     gridEl.addEventListener("click", async (e) => {
+      const rmTag = e.target.closest('[data-act="remove-tag"]');
+      if (rmTag && gridEl.contains(rmTag)) {
+        e.stopPropagation();
+        const vid = Number(rmTag.getAttribute("data-vid"));
+        const tid = Number(rmTag.getAttribute("data-tag-id"));
+        if (vid && tid) await removeSingleTagFromVideo(vid, tid);
+        return;
+      }
+      const edTag = e.target.closest('[data-act="edit-tag"]');
+      if (edTag && gridEl.contains(edTag)) {
+        e.stopPropagation();
+        const vid = Number(edTag.getAttribute("data-vid"));
+        const tid = Number(edTag.getAttribute("data-tag-id"));
+        if (vid && tid) await editSingleTagOnVideo(vid, tid);
+        return;
+      }
       const tagBtn = e.target.closest("button.tag-filter");
       if (tagBtn && gridEl.contains(tagBtn)) {
         const raw = tagBtn.getAttribute("data-filter-tag");

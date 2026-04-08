@@ -123,7 +123,8 @@ def list_video_rows(
     sql = f"""
         SELECT
             v.*,
-            GROUP_CONCAT(t.name, '|') AS tag_names
+            GROUP_CONCAT(t.name, '|') AS tag_names,
+            GROUP_CONCAT(t.id ORDER BY t.name, '|') AS tag_ids
         FROM videos v
         LEFT JOIN video_tags vt ON vt.video_id = v.id
         LEFT JOIN tags t ON t.id = vt.tag_id
@@ -134,8 +135,13 @@ def list_video_rows(
 
 
 def serialize_video_row(row: sqlite3.Row) -> Dict:
-    tags = row["tag_names"].split("|") if row["tag_names"] else []
+    tag_names_raw = row["tag_names"]
+    tags = tag_names_raw.split("|") if tag_names_raw else []
     keys = row.keys()
+    tag_ids_raw = row["tag_ids"] if "tag_ids" in keys else None
+    ids = [int(x) for x in tag_ids_raw.split("|")] if tag_ids_raw else []
+    n = min(len(ids), len(tags))
+    tag_items = [{"id": ids[i], "name": tags[i]} for i in range(n)]
     recycled_at = row["recycled_at"] if "recycled_at" in keys else None
     return {
         "id": row["id"],
@@ -148,6 +154,7 @@ def serialize_video_row(row: sqlite3.Row) -> Dict:
         "watch_count": row["watch_count"],
         "cover_url": f"/api/covers/{row['cover_file']}" if row["cover_file"] else "",
         "tags": tags,
+        "tag_items": tag_items,
         "recycled": recycled_at is not None,
         "recycled_at": recycled_at,
     }

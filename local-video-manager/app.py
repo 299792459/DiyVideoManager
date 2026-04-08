@@ -874,7 +874,8 @@ def list_video_rows(
     sql = f"""
         SELECT
             v.*,
-            GROUP_CONCAT(t.name, '|') AS tag_names
+            GROUP_CONCAT(t.name, '|') AS tag_names,
+            GROUP_CONCAT(t.id ORDER BY t.name, '|') AS tag_ids
         FROM videos v
         LEFT JOIN video_tags vt ON vt.video_id = v.id
         LEFT JOIN tags t ON t.id = vt.tag_id
@@ -885,8 +886,13 @@ def list_video_rows(
 
 
 def serialize_video_row(row: sqlite3.Row) -> Dict:
-    tags = row["tag_names"].split("|") if row["tag_names"] else []
+    tag_names_raw = row["tag_names"]
+    tags = tag_names_raw.split("|") if tag_names_raw else []
     keys = row.keys()
+    tag_ids_raw = row["tag_ids"] if "tag_ids" in keys else None
+    ids = [int(x) for x in tag_ids_raw.split("|")] if tag_ids_raw else []
+    n = min(len(ids), len(tags))
+    tag_items = [{"id": ids[i], "name": tags[i]} for i in range(n)]
     recycled_at = row["recycled_at"] if "recycled_at" in keys else None
     return {
         "id": row["id"],
@@ -899,6 +905,7 @@ def serialize_video_row(row: sqlite3.Row) -> Dict:
         "watch_count": row["watch_count"],
         "cover_url": f"/api/covers/{row['cover_file']}" if row["cover_file"] else "",
         "tags": tags,
+        "tag_items": tag_items,
         "recycled": recycled_at is not None,
         "recycled_at": recycled_at,
     }
@@ -1723,9 +1730,10 @@ def api_add_tag(video_id: int):
         "INSERT INTO video_tags(video_id, tag_id, source, created_at) VALUES(?,?, 'manual', ?) ON CONFLICT(video_id, tag_id) DO NOTHING",
         (video_id, tag_row["id"], now),
     )
+    _rebuild_search_text_for_video(conn, video_id)
     conn.commit()
     conn.close()
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "tag_id": tag_row["id"]})
 
 
 @app.route("/api/videos/<int:video_id>/tags/<int:tag_id>", methods=["DELETE"])
@@ -1737,6 +1745,51 @@ def api_delete_tag(video_id: int, tag_id: int):
     conn.commit()
     conn.close()
     return jsonify({"ok": True})
+
+
+@app.route("/api/videos/<int:video_id>/tags/<int:tag_id>", methods=["PATCH"])
+def api_patch_video_tag(video_id: int, tag_id: int):
+    """将某视频上已关联的标签改为另一名称（使用全局 tags 表，可与其他视频共用同名标签）。"""
+    payload = request.get_json(force=True) or {}
+    new_name = (payload.get("name") or "").strip()
+    if not new_name or len(new_name) > 200:
+        return jsonify({"ok": False, "error": "invalid name"}), 400
+    conn = get_conn()
+    try:
+        link = conn.execute(
+            "SELECT 1 FROM video_tags WHERE video_id = ? AND tag_id = ?",
+            (video_id, tag_id),
+        ).fetchone()
+        if not link:
+            return jsonify({"ok": False, "error": "tag not on video"}), 404
+        now = int(time.time())
+        conn.execute(
+            "INSERT INTO tags(name, is_auto, created_at) VALUES(?, 0, ?) ON CONFLICT(name) DO NOTHING",
+            (new_name, now),
+        )
+        target = conn.execute("SELECT id FROM tags WHERE name = ?", (new_name,)).fetchone()
+        if not target:
+            return jsonify({"ok": False, "error": "target tag missing"}), 500
+        new_id = target["id"]
+        if new_id == tag_id:
+            conn.commit()
+            return jsonify({"ok": True, "unchanged": True, "tag_id": tag_id})
+        other = conn.execute(
+            "SELECT 1 FROM video_tags WHERE video_id = ? AND tag_id = ?",
+            (video_id, new_id),
+        ).fetchone()
+        conn.execute("DELETE FROM video_tags WHERE video_id = ? AND tag_id = ?", (video_id, tag_id))
+        if not other:
+            conn.execute(
+                "INSERT INTO video_tags(video_id, tag_id, source, created_at) VALUES(?,?, 'manual', ?)",
+                (video_id, new_id, now),
+            )
+        _rebuild_search_text_for_video(conn, video_id)
+        conn.commit()
+    finally:
+        conn.close()
+    LOG.info("视频上单条改标签 video_id=%s old_tag_id=%s -> %r", video_id, tag_id, new_name)
+    return jsonify({"ok": True, "tag_id": new_id})
 
 
 @app.route("/api/videos/<int:video_id>/tags/clear", methods=["POST"])
