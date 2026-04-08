@@ -402,10 +402,16 @@ button:hover {
 }
 
 .card {
+  position: relative;
   border: 1px solid #2f2f2f;
   border-radius: 10px;
-  overflow: hidden;
+  overflow: visible;
   background: #1b1b1b;
+}
+
+.card > .cover {
+  overflow: hidden;
+  border-radius: 10px 10px 0 0;
 }
 
 .cover {
@@ -446,17 +452,57 @@ button:hover {
 }
 
 .tags {
-  min-height: 28px;
-  margin: 8px 0;
+  min-height: 20px;
+  margin: 4px 0 6px;
+}
+
+/* 卡片标签：单行横向滚动，尽量多显示标签 */
+.tags-row-compact {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 3px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 0 4px;
+  margin: 2px 0 4px;
+  min-height: 22px;
+  max-width: 100%;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tags-row-compact::-webkit-scrollbar {
+  height: 4px;
+}
+
+.tags-row-compact::-webkit-scrollbar-thumb {
+  background: #3a3a4a;
+  border-radius: 4px;
+}
+
+.tags-row-compact .tag {
+  flex: 0 0 auto;
+  margin: 0;
+  white-space: nowrap;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tags-row-compact .tags-empty-hint {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .tag {
   display: inline-block;
-  margin: 0 6px 6px 0;
-  padding: 3px 8px;
+  margin: 0 4px 3px 0;
+  padding: 1px 6px;
   border-radius: 999px;
   background: #2c3f83;
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 button.tag.tag-filter {
@@ -478,30 +524,41 @@ button.tag.tag-filter.tag-filter-active {
 }
 
 .tag-filter-bar {
-  margin: 6px 0 8px;
-  font-size: 13px;
-  line-height: 1.5;
+  margin: 4px 0 6px;
+  font-size: 11px;
+  line-height: 1.35;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .tag-bar-h {
   color: #9a9a9a;
   margin-right: 4px;
+  font-size: inherit;
+}
+
+.tag-filter-bar .muted.small {
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.tag-filter-bar .btn-link {
+  font-size: 11px;
+  padding: 0 4px;
 }
 
 .tag-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
+  gap: 2px;
+  padding: 1px 6px;
   border-radius: 999px;
   border: 1px solid #4a6a9a;
   background: #243045;
   color: #e0e8ff;
-  font-size: 12px;
+  font-size: 11px;
   cursor: pointer;
 }
 
@@ -589,20 +646,22 @@ dialog {
   background: #502828;
 }
 
-/* 视频卡片：主操作仅「播放」，其余在「更多」内 */
+/* 视频卡片：主操作仅「播放」，其余在「更多」浮层内 */
 .actions-main {
   align-items: flex-start;
   flex-wrap: nowrap;
   gap: 10px;
 }
 
-.card-more {
+.card-more-wrap {
+  position: relative;
   flex: 1;
   min-width: 0;
+  display: flex;
+  justify-content: flex-end;
 }
 
-.card-more summary.btn-more {
-  list-style: none;
+.card-more-wrap .btn-more {
   cursor: pointer;
   display: inline-block;
   padding: 6px 12px;
@@ -611,54 +670,152 @@ dialog {
   border-radius: 6px;
   background: #252525;
   color: #ccc;
+  height: auto;
 }
 
-.card-more summary.btn-more::-webkit-details-marker {
-  display: none;
-}
-
-.card-more summary.btn-more:hover {
+.card-more-wrap .btn-more:hover {
   border-color: #6c8bff;
   color: #fff;
+}
+
+.card-more-pop button {
+  height: auto;
+}
+
+.card-more-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 80;
+  min-width: 232px;
+  max-width: min(340px, calc(100vw - 48px));
+  max-height: min(72vh, 440px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 8px 10px 10px;
+  background: #1e1e22;
+  border: 1px solid #3d3d48;
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+  scrollbar-width: thin;
+}
+
+.card-more-pop.hidden {
+  display: none !important;
+}
+
+.card-more-section-title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: #6a6a78;
+  margin: 8px 0 6px;
+  text-transform: uppercase;
+}
+
+.card-more-section-title:first-child {
+  margin-top: 0;
+}
+
+.card-more-tag-list {
+  margin: 0 0 6px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.card-more-empty {
+  margin: 4px 0;
+  font-size: 12px;
+}
+
+.card-more-tag-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid #2a2a30;
+  font-size: 12px;
+}
+
+.card-more-tag-row:last-child {
+  border-bottom: none;
+}
+
+.card-more-tag-row-idless {
+  color: #aaa;
+}
+
+.card-more-tag-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #e0e0e8;
+}
+
+.card-more-tag-btns {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+}
+
+.card-more-pop .btn-mini {
+  height: auto;
+  min-height: 0;
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 4px;
+  border: 1px solid #4a5568;
+  background: #2f3545;
+  color: #c8d4ff;
+}
+
+.card-more-pop .btn-mini:hover {
+  border-color: #6c8bff;
+}
+
+.card-more-pop .btn-mini-danger {
+  border-color: #5a3a3a;
+  background: #352525;
+  color: #ffb0b0;
+}
+
+.card-more-pop .btn-mini-danger:hover {
+  border-color: #c45c5c;
+  background: #402828;
+}
+
+.card-more-actions-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.card-more-actions-inline button {
+  height: auto;
+  min-height: 28px;
+  padding: 4px 10px;
+  font-size: 12px;
 }
 
 .card-more-btns {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid #2e2e2e;
+  gap: 6px;
+  margin-bottom: 4px;
 }
 
-.tags-editable .tag-with-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  margin: 2px 6px 2px 0;
-  vertical-align: middle;
-}
-
-.tag-act {
-  padding: 0 5px;
-  min-width: 22px;
+.card-more-btns button {
+  height: auto;
+  min-height: 28px;
+  padding: 4px 10px;
   font-size: 12px;
-  line-height: 1.3;
-  border-radius: 4px;
-  border: 1px solid #444;
-  background: #2a2a2a;
-  color: #9db8ff;
 }
 
-.tag-act:hover {
-  border-color: #6c8bff;
-}
-
-.tag-act-del {
-  color: #ff9e9e;
-  border-color: #5a3a3a;
-}
-
-.tag-act-del:hover {
-  background: #3a2525;
+.muted.tiny {
+  font-size: 10px;
+  white-space: nowrap;
 }
