@@ -348,8 +348,16 @@ def launch_external_player(exe: str, video_path: Path) -> Tuple[bool, str]:
 
 def run_cmd(args: List[str]) -> Tuple[int, str, str]:
     try:
-        p = subprocess.run(args, capture_output=True, text=True, check=False)
-        return p.returncode, p.stdout, p.stderr
+        # 使用二进制模式读取，避免 Windows GBK 编码问题
+        p = subprocess.run(args, capture_output=True, check=False)
+        # 尝试 utf-8 解码，失败则用 latin-1（不会抛异常）
+        try:
+            stdout = p.stdout.decode("utf-8", errors="replace")
+            stderr = p.stderr.decode("utf-8", errors="replace")
+        except Exception:
+            stdout = p.stdout.decode("latin-1", errors="replace")
+            stderr = p.stderr.decode("latin-1", errors="replace")
+        return p.returncode, stdout, stderr
     except FileNotFoundError:
         return 127, "", f"missing executable: {args[0]}"
 
@@ -871,19 +879,16 @@ def list_video_rows(
         params.append(n)
     where_clause = "WHERE " + " AND ".join(conditions)
 
+    # 使用 group_concat 替代 json_object（兼容旧版 SQLite）
     sql = f"""
         SELECT
             v.*,
             (
-                SELECT json_group_array(json_object('id', id, 'name', name))
-                FROM (
-                    SELECT t.id, t.name
-                    FROM video_tags vt
-                    JOIN tags t ON t.id = vt.tag_id
-                    WHERE vt.video_id = v.id
-                    ORDER BY t.name
-                ) z
-            ) AS tag_items_json
+                SELECT group_concat(t.id || '::' || t.name, '|||')
+                FROM video_tags vt
+                JOIN tags t ON t.id = vt.tag_id
+                WHERE vt.video_id = v.id
+            ) AS tag_items_str
         FROM videos v
         {where_clause}
     """
@@ -892,18 +897,16 @@ def list_video_rows(
 
 def serialize_video_row(row: sqlite3.Row) -> Dict:
     keys = row.keys()
-    raw = row["tag_items_json"] if "tag_items_json" in keys else None
+    raw = row["tag_items_str"] if "tag_items_str" in keys else None
     tag_items: List[Dict] = []
     if raw:
         try:
-            parsed = json.loads(raw)
-            if isinstance(parsed, list):
-                tag_items = [
-                    {"id": int(x["id"]), "name": str(x["name"])}
-                    for x in parsed
-                    if isinstance(x, dict) and "id" in x and "name" in x
-                ]
-        except (json.JSONDecodeError, TypeError, KeyError, ValueError):
+            # 解析 "id::name|||id::name" 格式
+            for item in raw.split("|||"):
+                if "::" in item:
+                    parts = item.split("::", 1)
+                    tag_items.append({"id": int(parts[0]), "name": parts[1]})
+        except (ValueError, IndexError):
             tag_items = []
     tags = [ti["name"] for ti in tag_items]
     recycled_at = row["recycled_at"] if "recycled_at" in keys else None
