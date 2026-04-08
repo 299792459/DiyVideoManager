@@ -546,3 +546,45 @@ dialog {
   max-height: 70vh;
   background: #000;
 }
+
+/* 标签管理页 */
+.tag-manage-wrap {
+  margin-top: 12px;
+  overflow-x: auto;
+}
+
+.tag-manage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.tag-manage-table th,
+.tag-manage-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #2e2e2e;
+  text-align: left;
+}
+
+.tag-manage-table th {
+  color: #9a9a9a;
+  font-weight: 600;
+}
+
+.tag-manage-actions {
+  white-space: nowrap;
+}
+
+.tag-manage-actions button {
+  margin-right: 6px;
+}
+
+.btn-danger {
+  border-color: #8b3a3a;
+  background: #3a2020;
+  color: #ffb4b4;
+}
+
+.btn-danger:hover {
+  background: #502828;
+}

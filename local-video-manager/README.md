@@ -8,7 +8,7 @@
 
 | 模块 | 说明 |
 |------|------|
-| **视频 / 设置分栏** | 顶部「视频」「设置」切换；视频页专注列表与搜索，设置页集中路径、扫描、AI 与系统统计。 |
+| **视频 / 标签 / 设置** | 顶部「视频」「标签管理」「设置」切换；**标签管理**可查看全部标签、重命名、删除；视频卡片可 **清标签**。 |
 | **紧凑搜索区** | 「本地筛选」与「AI 提问」双栏并排（窄屏自动单列）；关键词/AI 输入各占模块内一行，分页与卡片宽度独立为「分页与外观」模块。 |
 | **分页** | 列表支持 `page` / `per_page`；每页条数可选（12～96）。**浏览模式**由服务端分页；**AI 搜索**结果在前端分页（不重复调模型）。 |
 | **卡片大小** | 滑块调节 `--grid-card-min`（约 160～480px），拖动即可改变一屏列数；偏好存于浏览器 `localStorage`（`vm_grid_card_min`、`vm_per_page`）。 |
@@ -90,6 +90,10 @@ python app.py
 | `GET /api/tags/export-readme` | 下载给大模型阅读的格式说明（与 `docs/TAGS_LLM_README.md` 一致）。 |
 | `POST /api/tags/import-preview` | 导入前预览：与 `import` 相同正文与 `strict_path`，不写库；返回 `would_apply`、`samples`（旧/新标签示例）、各类跳过计数与解析错误。 |
 | `POST /api/tags/import` | 导入大模型处理后的 JSONL：`multipart/form-data` 字段 `file`，或 **raw body** 直接贴全文。可选 `?strict_path=1`：行内 `p` 与库不一致时跳过。返回 `updated`、`skipped_*`、`errors`。 |
+| `POST /api/videos/<id>/tags/clear` | 移除该视频的**全部**标签，并重写 `search_text`。 |
+| `GET /api/tags/catalog` | 标签管理页用：返回全部标签及 **`video_count`**（引用视频数）。 |
+| `PATCH /api/tags/<tag_id>` | JSON `{"name":"新名称"}` 重命名；与已有标签重名则 **409**。 |
+| `DELETE /api/tags/<tag_id>` | 删除该标签及其所有视频关联；返回 **`affected_videos`**。 |
 
 **标签批量整理**：建议先 **备份数据目录** 下的 `video_manager.db`。导出 → 外部重写 `t` → 再导入；仅文件中出现的 `i` 会被更新。若视频曾移动/重扫导致 ID 变化，需 **重新导出** 再交给模型。
 

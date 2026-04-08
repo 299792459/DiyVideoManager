@@ -622,6 +622,18 @@ def _set_video_tags_replace(conn: sqlite3.Connection, video_id: int, tag_names: 
     )
 
 
+def _rebuild_search_text_for_video(conn: sqlite3.Connection, video_id: int) -> None:
+    """按当前 video_tags 关联重写 search_text（删除/重命名标签后调用）。"""
+    row = conn.execute("SELECT filename FROM videos WHERE id = ?", (video_id,)).fetchone()
+    if not row:
+        return
+    tags = _video_tag_names(conn, video_id)
+    conn.execute(
+        "UPDATE videos SET search_text = ? WHERE id = ?",
+        (make_search_text(row["filename"], tags), video_id),
+    )
+
+
 def extract_filename_tokens(filename: str) -> List[str]:
     base = Path(filename).stem.lower()
     ascii_tokens = re.findall(r"[a-z0-9]{2,}", base)
@@ -1721,9 +1733,131 @@ def api_delete_tag(video_id: int, tag_id: int):
     LOG.info("删除标签关联 video_id=%s tag_id=%s", video_id, tag_id)
     conn = get_conn()
     conn.execute("DELETE FROM video_tags WHERE video_id = ? AND tag_id = ?", (video_id, tag_id))
+    _rebuild_search_text_for_video(conn, video_id)
     conn.commit()
     conn.close()
     return jsonify({"ok": True})
+
+
+@app.route("/api/videos/<int:video_id>/tags/clear", methods=["POST"])
+def api_clear_video_tags(video_id: int):
+    """移除该视频的全部标签（与导入「空列表」等价）。"""
+    LOG.info("清空视频标签 video_id=%s", video_id)
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT id FROM videos WHERE id = ?", (video_id,)
+        ).fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": "not found"}), 404
+        _set_video_tags_replace(conn, video_id, [])
+        conn.commit()
+    finally:
+        conn.close()
+    try:
+        clear_tag_vector_cache()
+    except Exception:
+        LOG.exception("clear_tag_vector_cache after clear video tags")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/tags/catalog", methods=["GET"])
+def api_tags_catalog():
+    """全部标签列表（含引用视频数），供标签管理页。"""
+    conn = get_conn()
+    rows = conn.execute(
+        """
+        SELECT t.id, t.name, t.is_auto, t.created_at,
+               COUNT(vt.video_id) AS video_count
+        FROM tags t
+        LEFT JOIN video_tags vt ON vt.tag_id = t.id
+        GROUP BY t.id
+        ORDER BY t.is_auto DESC, t.name ASC
+        """
+    ).fetchall()
+    conn.close()
+    return jsonify(
+        {
+            "ok": True,
+            "tags": [
+                {
+                    "id": r["id"],
+                    "name": r["name"],
+                    "is_auto": bool(r["is_auto"]),
+                    "created_at": r["created_at"],
+                    "video_count": int(r["video_count"] or 0),
+                }
+                for r in rows
+            ],
+        }
+    )
+
+
+@app.route("/api/tags/<int:tag_id>", methods=["PATCH"])
+def api_tag_rename(tag_id: int):
+    """重命名标签；若名称已存在则 409。"""
+    payload = request.get_json(force=True) or {}
+    new_name = (payload.get("name") or "").strip()
+    if not new_name or len(new_name) > 200:
+        return jsonify({"ok": False, "error": "invalid name"}), 400
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT id FROM tags WHERE id = ?", (tag_id,)).fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": "not found"}), 404
+        dup = conn.execute(
+            "SELECT id FROM tags WHERE name = ? AND id != ?", (new_name, tag_id)
+        ).fetchone()
+        if dup:
+            return jsonify({"ok": False, "error": "name already exists"}), 409
+        vids = [
+            r["video_id"]
+            for r in conn.execute(
+                "SELECT video_id FROM video_tags WHERE tag_id = ?", (tag_id,)
+            ).fetchall()
+        ]
+        conn.execute(
+            "UPDATE tags SET name = ? WHERE id = ?", (new_name, tag_id)
+        )
+        for vid in vids:
+            _rebuild_search_text_for_video(conn, vid)
+        conn.commit()
+    finally:
+        conn.close()
+    try:
+        clear_tag_vector_cache()
+    except Exception:
+        LOG.exception("clear_tag_vector_cache after tag rename")
+    LOG.info("重命名标签 tag_id=%s -> %r", tag_id, new_name)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/tags/<int:tag_id>", methods=["DELETE"])
+def api_tag_delete_global(tag_id: int):
+    """从库中删除该标签及其所有视频关联。"""
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT id, name FROM tags WHERE id = ?", (tag_id,)).fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": "not found"}), 404
+        vids = [
+            r["video_id"]
+            for r in conn.execute(
+                "SELECT video_id FROM video_tags WHERE tag_id = ?", (tag_id,)
+            ).fetchall()
+        ]
+        conn.execute("DELETE FROM tags WHERE id = ?", (tag_id,))
+        for vid in vids:
+            _rebuild_search_text_for_video(conn, vid)
+        conn.commit()
+    finally:
+        conn.close()
+    try:
+        clear_tag_vector_cache()
+    except Exception:
+        LOG.exception("clear_tag_vector_cache after tag delete")
+    LOG.info("删除标签 tag_id=%s name=%r 影响视频数=%s", tag_id, row["name"], len(vids))
+    return jsonify({"ok": True, "affected_videos": len(vids)})
 
 
 @app.route("/api/tags/auto-generate", methods=["POST"])

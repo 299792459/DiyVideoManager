@@ -14,6 +14,7 @@
     </div>
     <nav class="top-nav" aria-label="主导航">
       <button type="button" id="navVideos" class="nav-btn active">视频</button>
+      <button type="button" id="navTags" class="nav-btn">标签管理</button>
       <button type="button" id="navSettings" class="nav-btn">设置</button>
     </nav>
   </header>
@@ -87,6 +88,32 @@
     <div id="videoStatus" class="inline-status inline-status-tight"></div>
 
     <section id="videoGrid" class="grid"></section>
+  </div>
+
+  <!-- ========== 标签管理 ========== -->
+  <div id="viewTags" class="view hidden">
+    <section class="panel">
+      <h2>标签管理</h2>
+      <p class="muted small">查看库中全部标签，可重命名或删除。删除标签会解除所有视频上的该标签，并更新搜索索引。</p>
+      <div class="actions">
+        <button type="button" id="tagCatalogRefreshBtn">刷新列表</button>
+      </div>
+      <div id="tagManageStatus" class="inline-status"></div>
+      <div class="tag-manage-wrap">
+        <table class="tag-manage-table" id="tagManageTable">
+          <thead>
+            <tr>
+              <th>名称</th>
+              <th>类型</th>
+              <th>引用视频数</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="tagManageBody"></tbody>
+        </table>
+        <p id="tagManageEmpty" class="muted hidden">暂无标签</p>
+      </div>
+    </section>
   </div>
 
   <!-- ========== 设置 ========== -->
@@ -252,9 +279,12 @@
     const player = document.getElementById("player");
     const playerTitle = document.getElementById("playerTitle");
     const viewVideos = document.getElementById("viewVideos");
+    const viewTags = document.getElementById("viewTags");
     const viewSettings = document.getElementById("viewSettings");
     const navVideos = document.getElementById("navVideos");
+    const navTags = document.getElementById("navTags");
     const navSettings = document.getElementById("navSettings");
+    const tagManageStatusEl = document.getElementById("tagManageStatus");
 
     let currentVideos = [];
     /** browse：服务端分页；ai：前端对 aiFullVideos 分页 */
@@ -280,15 +310,23 @@
       settingsStatusEl.className = "inline-status " + (isErr ? "err" : "ok");
     }
 
+    function setTagManageStatus(text, isErr = false) {
+      tagManageStatusEl.textContent = text;
+      tagManageStatusEl.className = "inline-status " + (isErr ? "err" : "ok");
+    }
+
     function showView(which) {
       const isVideos = which === "videos";
+      const isTags = which === "tags";
+      const isSettings = which === "settings";
       viewVideos.classList.toggle("hidden", !isVideos);
-      viewSettings.classList.toggle("hidden", isVideos);
+      viewTags.classList.toggle("hidden", !isTags);
+      viewSettings.classList.toggle("hidden", !isSettings);
       navVideos.classList.toggle("active", isVideos);
-      navSettings.classList.toggle("active", !isVideos);
-      if (!isVideos) {
-        loadStatsSummary();
-      }
+      navTags.classList.toggle("active", isTags);
+      navSettings.classList.toggle("active", isSettings);
+      if (isSettings) loadStatsSummary();
+      if (isTags) loadTagsCatalog();
     }
 
     function applyCardSize(px) {
@@ -345,6 +383,7 @@
     }
 
     navVideos.addEventListener("click", () => showView("videos"));
+    navTags.addEventListener("click", () => showView("tags"));
     navSettings.addEventListener("click", () => showView("settings"));
 
     function fmtSize(bytes) {
@@ -568,6 +607,7 @@
               ${extPlay}
               <button type="button" data-act="reveal" data-id="${v.id}">打开位置</button>
               <button type="button" data-act="add-tag" data-id="${v.id}">加标签</button>
+              <button type="button" data-act="clear-tags" data-id="${v.id}" title="移除该视频的全部标签">清标签</button>
               <button type="button" data-act="refresh-cover" data-id="${v.id}" title="无封面时生成；已有封面则跳过">刷新封面</button>
               <button type="button" data-act="refresh-cover-force" data-id="${v.id}" title="无论是否已有封面都重新生成">强刷封面</button>
               <button type="button" data-act="cover" data-id="${v.id}">换封面</button>
@@ -685,6 +725,108 @@
         listMode = "browse";
         await queryVideos(1);
       } else setSettingsStatus("自动标签失败", true);
+    }
+
+    async function clearVideoTags(videoId) {
+      if (!confirm("确定移除该视频的全部标签？")) return;
+      setVideoStatus("正在清除标签…");
+      const r = await fetch(`/api/videos/${videoId}/tags/clear`, { method: "POST" });
+      const data = await r.json();
+      if (!data.ok) {
+        setVideoStatus(data.error || "清除失败", true);
+        return;
+      }
+      setVideoStatus("已清除该视频的全部标签");
+      if (listMode === "browse") await queryVideos(currentPage);
+      else {
+        const v = aiFullVideos.find(x => x.id === videoId);
+        if (v) v.tags = [];
+        renderAiPage();
+      }
+    }
+
+    let tagCatalogList = [];
+
+    async function loadTagsCatalog() {
+      setTagManageStatus("正在加载…");
+      const r = await fetch("/api/tags/catalog");
+      const data = await r.json();
+      if (!data.ok) {
+        setTagManageStatus("加载失败", true);
+        return;
+      }
+      tagCatalogList = data.tags || [];
+      renderTagManageTable();
+      setTagManageStatus(`共 ${tagCatalogList.length} 个标签`);
+    }
+
+    function renderTagManageTable() {
+      const tbody = document.getElementById("tagManageBody");
+      const emptyEl = document.getElementById("tagManageEmpty");
+      tbody.innerHTML = "";
+      if (!tagCatalogList.length) {
+        emptyEl.classList.remove("hidden");
+        return;
+      }
+      emptyEl.classList.add("hidden");
+      tagCatalogList.forEach(t => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td><strong>${escHtml(t.name)}</strong></td>
+          <td>${t.is_auto ? "自动" : "手动"}</td>
+          <td>${t.video_count}</td>
+          <td class="tag-manage-actions">
+            <button type="button" data-tag-op="rename" data-tag-id="${t.id}">重命名</button>
+            <button type="button" data-tag-op="delete" data-tag-id="${t.id}" class="btn-danger">删除</button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    async function renameTagGlobal(tagId) {
+      const t = tagCatalogList.find(x => x.id === tagId);
+      if (!t) return;
+      const nn = prompt("新的标签名称", t.name);
+      if (nn === null) return;
+      const name = nn.trim();
+      if (!name) {
+        setTagManageStatus("名称不能为空", true);
+        return;
+      }
+      setTagManageStatus("正在保存…");
+      const r = await fetch(`/api/tags/${tagId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name })
+      });
+      const data = await r.json();
+      if (!data.ok) {
+        setTagManageStatus(data.error === "name already exists" ? "已存在同名标签" : (data.error || "重命名失败"), true);
+        return;
+      }
+      setTagManageStatus("已重命名");
+      await loadTagsCatalog();
+      if (!viewVideos.classList.contains("hidden")) await queryVideos(currentPage);
+    }
+
+    async function deleteTagGlobal(tagId) {
+      const t = tagCatalogList.find(x => x.id === tagId);
+      if (!t) return;
+      if (!confirm(`确定删除标签「${t.name}」？将解除 ${t.video_count} 个视频上的该标签，且不可恢复。`)) return;
+      setTagManageStatus("正在删除…");
+      const r = await fetch(`/api/tags/${tagId}`, { method: "DELETE" });
+      const data = await r.json();
+      if (!data.ok) {
+        setTagManageStatus(data.error || "删除失败", true);
+        return;
+      }
+      setTagManageStatus(`已删除，影响 ${data.affected_videos ?? 0} 个视频`);
+      await loadTagsCatalog();
+      selectedTagFilters = selectedTagFilters.filter(n => n !== t.name);
+      saveTagFiltersToStorage();
+      renderTagFilterBar();
+      if (!viewVideos.classList.contains("hidden")) await queryVideos(currentPage);
     }
 
     async function addTag(videoId) {
@@ -1127,6 +1269,16 @@
     document.getElementById("aiQuestionInput").addEventListener("keydown", e => {
       if (e.key === "Enter") aiSearchVideos();
     });
+    document.getElementById("tagManageTable").addEventListener("click", async (e) => {
+      const btn = e.target.closest("button[data-tag-op]");
+      if (!btn) return;
+      const tid = Number(btn.getAttribute("data-tag-id"));
+      const op = btn.getAttribute("data-tag-op");
+      if (op === "rename") await renameTagGlobal(tid);
+      if (op === "delete") await deleteTagGlobal(tid);
+    });
+    document.getElementById("tagCatalogRefreshBtn").addEventListener("click", () => loadTagsCatalog());
+
     document.getElementById("closePlayerBtn").addEventListener("click", () => {
       player.pause();
       player.src = "";
@@ -1171,6 +1323,7 @@
       }
       if (act === "restore") await restoreVideo(id);
       if (act === "add-tag") await addTag(id);
+      if (act === "clear-tags") await clearVideoTags(id);
       if (act === "refresh-cover") await refreshOneCover(id, false);
       if (act === "refresh-cover-force") await refreshOneCover(id, true);
       if (act === "cover") await uploadCover(id);
